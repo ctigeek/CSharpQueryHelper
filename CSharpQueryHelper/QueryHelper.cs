@@ -23,11 +23,17 @@ namespace CSharpQueryHelper
         private readonly string DataProvider;
         private readonly DbProviderFactory DbFactory;
 
-        public QueryHelper(string connectionString, string dataProvider)
+        public QueryHelper(string connectionString, string dataProvider, DbProviderFactory dbFactory)
         {
+            if (dbFactory == null) throw new ArgumentException("dbFactory not found.", "dbFactory");
             this.ConnectionString = connectionString;
             this.DataProvider = dataProvider;
-            this.DbFactory = DbProviderFactories.GetFactory(DataProvider);
+            this.DbFactory = dbFactory;
+        }
+
+        public QueryHelper(string connectionString, string dataProvider) :
+            this(connectionString, dataProvider, DbProviderFactories.GetFactory(dataProvider))
+        {
         }
 
         public QueryHelper(string connectionName)
@@ -98,6 +104,7 @@ namespace CSharpQueryHelper
         public T ReadScalerDataFromDB<T>(SQLQueryWithParameters query)
         {
             var conn = CreateConnection();
+            T returnResult = default(T);
             using (conn)
             {
                 conn.Open();
@@ -109,16 +116,17 @@ namespace CSharpQueryHelper
                 {
                     if (result is T)
                     {
-                        return (T)result;
+                        returnResult = (T)result;
                     }
                     else if (typeof(T) == typeof(string))
                     {
                         object stringResult = (object)result.ToString();
-                        return (T)stringResult;
+                        returnResult = (T)stringResult;
                     }
                 }
-                return default(T);
+                conn.Close();
             }
+            return returnResult;
         }
         
         public void ReadDataFromDB(string sql, Func<DbDataReader, bool> processRow)
@@ -250,6 +258,10 @@ namespace CSharpQueryHelper
 
     public class SQLQueryWithParameters : SQLQuery
     {
+        public SQLQueryWithParameters(string sql)
+            : this(sql, null)
+        { }
+
         public SQLQueryWithParameters(string sql,Func<DbDataReader, bool> processRow)
             : base(sql)
         {
