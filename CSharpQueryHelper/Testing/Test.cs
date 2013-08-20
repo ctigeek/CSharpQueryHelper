@@ -29,7 +29,6 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.Parameters = MockDatabaseFactory.CreateParameterCollection();
             MockDatabaseFactory.DbConnection = MockDatabaseFactory.CreateDbConnection();
             MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand();
-            
 
             queryHelper = new QueryHelper(connectionString, provider, new MockDatabaseFactory());
         }
@@ -93,6 +92,41 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+        }
+
+        [Test]
+        public void ReadSingleRowNoParameters()
+        {
+            Dictionary<string, object> dataRow = new Dictionary<string, object>();
+            dataRow.Add("column1", 1);
+            dataRow.Add("column2", "3");
+            dataRow.Add("column3", DateTime.Parse("1/1/2000"));
+
+            Mock<MoqDataReader> dataReader = new Mock<MoqDataReader>(dataRow);
+            dataReader.CallBase = true;
+            dataReader.Setup(dr => dr.Close());
+
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
+
+            int column1 = 0;
+            string column2 = string.Empty;
+            DateTime column3 = DateTime.MinValue;
+
+            var processRow = new Func<DbDataReader, bool>(dr =>
+            {
+                column1 = (int)dr["column1"];
+                column2 = (string)dr["column2"];
+                column3 = (DateTime)dr["column3"];
+                return true;
+            });
+
+            var query = new SQLQueryWithParameters("select happyString from table;", processRow);
+            queryHelper.ReadDataFromDB(query);
+
+            Assert.AreEqual(1, column1);
+            Assert.AreEqual("3", column2);
+            Assert.AreEqual(DateTime.Parse("1/1/2000"), column3);
+
         }
 
     }
