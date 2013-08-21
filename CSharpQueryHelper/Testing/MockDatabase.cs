@@ -38,7 +38,6 @@ namespace CSharpQueryHelper
             dbTransaction.Setup(dbt => dbt.Rollback());
             return dbTransaction;
         }
-
         public static Mock<MoqDbConnection> CreateDbConnection()
         {
             var dbConnection = new Mock<MoqDbConnection>();
@@ -62,7 +61,6 @@ namespace CSharpQueryHelper
             parameters.Setup(p => p.Add(It.IsAny<DbParameter>()));
             return parameters;
         }
-
         public static Mock<MoqDbCommand> CreateDbCommand(DbDataReader dataReader = null)
         {
             var dbCommand = (dataReader == null) ?
