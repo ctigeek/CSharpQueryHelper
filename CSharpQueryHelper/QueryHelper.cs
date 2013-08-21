@@ -19,9 +19,9 @@ namespace CSharpQueryHelper
 
     public class QueryHelper : IQueryHelper
     {
-        private readonly string ConnectionString;
-        private readonly string DataProvider;
-        private readonly DbProviderFactory DbFactory;
+        public readonly string ConnectionString;
+        public readonly string DataProvider;
+        public readonly DbProviderFactory DbFactory;
 
         public QueryHelper(string connectionString, string dataProvider, DbProviderFactory dbFactory)
         {
@@ -267,7 +267,6 @@ namespace CSharpQueryHelper
         {
             if (processRow == null)
             {
-                //throw new ArgumentException("You must specify an Func to process each row as it is read.", "processRow");
                 this.ProcessRow = new Func<DbDataReader, bool>(dr => { return true; });
             }
             this.ProcessRow = processRow;
