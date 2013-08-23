@@ -16,11 +16,23 @@ namespace CSharpQueryHelper
         void ReadDataFromDB(SQLQueryWithParameters query);
     }
 
+    public interface ILogger
+    {
+        bool DebugEnabled { get; set; }
+        bool ErrorEnabled { get; set; }
+        bool WarnEnabled { get; set; }
+
+        void Debug(string message);
+        void Error(string message);
+        void Warn(string message);
+    }
+
     public class QueryHelper : IQueryHelper
     {
         public readonly string ConnectionString;
         public readonly string DataProvider;
         public readonly DbProviderFactory DbFactory;
+        public ILogger Logger { get; set; }
 
         public QueryHelper(string connectionString, string dataProvider, DbProviderFactory dbFactory)
         {
@@ -237,6 +249,28 @@ namespace CSharpQueryHelper
                 command.Transaction = transaction;
             }
             return command;
+        }
+
+        private void LogWarn(string message)
+        {
+            if (Logger != null && Logger.WarnEnabled)
+            {
+                Logger.Warn(message);
+            }
+        }
+        private void LogError(string message)
+        {
+            if (Logger != null && Logger.ErrorEnabled)
+            {
+                Logger.Error(message);
+            }
+        }
+        private void LogDebug(string message)
+        {
+            if (Logger != null && Logger.DebugEnabled)
+            {
+                Logger.Debug(message);
+            }
         }
     }
     public abstract class SQLQuery {
