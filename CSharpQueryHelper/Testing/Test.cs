@@ -18,12 +18,6 @@ namespace CSharpQueryHelper
         string provider = "SqlServerCe";
         Dictionary<string, object> dataRow;
 
-        [TestFixtureSetUp]
-        public void FixtureSetup()
-        {
-            
-        }
-
         [SetUp]
         public void Setup()
         {
@@ -43,6 +37,19 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalar()).Returns(scalerReturn);
             var query = new SQLQueryWithParameters("select happyString from table;");
             var returnValue = queryHelper.ReadScalerDataFromDB<string>(query);
+
+            Assert.AreEqual(scalerReturn, returnValue);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
+        }
+        [Test]
+        public void ReadScalerReturnsAStringUsingSQLString()
+        {
+            string scalerReturn = "This is the return value.";
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalar()).Returns(scalerReturn);
+            var returnValue = queryHelper.ReadScalerDataFromDB<string>("select happyString from table;");
 
             Assert.AreEqual(scalerReturn, returnValue);
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
@@ -170,6 +177,27 @@ namespace CSharpQueryHelper
             query.Parameters.Add("param1", "value1");
             query.Parameters.Add("param2", "value2");
             query.Parameters.Add("param3", 333);
+            queryHelper.NonQueryToDB(query);
+
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            Assert.AreEqual(432, query.RowCount);
+        }
+
+        [Test]
+        public void NonQueryTestWithParametersBuiltDynamicallyNoIdentity()
+        {
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand();
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQuery()).Returns(432);
+
+            var query = new NonQueryWithParameters("insert into tableName values (1,2,3,4,5);");
+            query.BuildParameters = new Action<SQLQuery>(q =>
+            {
+                q.Parameters.Add("param1", "value1");
+                q.Parameters.Add("param2", "value2");
+                q.Parameters.Add("param3", 333);
+            });
+            
             queryHelper.NonQueryToDB(query);
 
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));

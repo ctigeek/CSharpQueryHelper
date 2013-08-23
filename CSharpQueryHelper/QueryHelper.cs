@@ -13,7 +13,6 @@ namespace CSharpQueryHelper
         void NonQueryToDB(NonQueryWithParameters query);
         T ReadScalerDataFromDB<T>(string sql);
         T ReadScalerDataFromDB<T>(SQLQueryWithParameters query);
-        void ReadDataFromDB(string sql, Func<DbDataReader, bool> processRow);
         void ReadDataFromDB(SQLQueryWithParameters query);
     }
 
@@ -127,11 +126,6 @@ namespace CSharpQueryHelper
                 conn.Close();
             }
             return returnResult;
-        }
-        
-        public void ReadDataFromDB(string sql, Func<DbDataReader, bool> processRow)
-        {
-            ReadDataFromDB(new SQLQueryWithParameters(sql, processRow));
         }
         
         public void ReadDataFromDB(SQLQueryWithParameters query)
