@@ -16,23 +16,13 @@ namespace CSharpQueryHelper
         void ReadDataFromDB(SQLQueryWithParameters query);
     }
 
-    public interface ILogger
-    {
-        bool DebugEnabled { get; set; }
-        bool ErrorEnabled { get; set; }
-        bool WarnEnabled { get; set; }
-
-        void Debug(string message);
-        void Error(string message);
-        void Warn(string message);
-    }
-
     public class QueryHelper : IQueryHelper
     {
         public readonly string ConnectionString;
         public readonly string DataProvider;
         public readonly DbProviderFactory DbFactory;
-        public ILogger Logger { get; set; }
+        public bool DebugLoggingEnabled { get; set; }
+        public Action<string,System.Diagnostics.TraceEventType> LogMessage { get; set; }
 
         public QueryHelper(string connectionString, string dataProvider, DbProviderFactory dbFactory)
         {
@@ -40,6 +30,7 @@ namespace CSharpQueryHelper
             this.ConnectionString = connectionString;
             this.DataProvider = dataProvider;
             this.DbFactory = dbFactory;
+            DebugLoggingEnabled = false;
         }
 
         public QueryHelper(string connectionString, string dataProvider) :
@@ -56,6 +47,7 @@ namespace CSharpQueryHelper
             this.ConnectionString = ConfigurationManager.ConnectionStrings[connectionName].ConnectionString;
             this.DataProvider = ConfigurationManager.ConnectionStrings[connectionName].ProviderName;
             this.DbFactory = DbProviderFactories.GetFactory(DataProvider);
+            DebugLoggingEnabled = false;
         }
 
         public void NonQueryToDBWithTransaction(IEnumerable<NonQueryWithParameters> queries)
@@ -71,6 +63,7 @@ namespace CSharpQueryHelper
                     {
                         var command = CreateCommand(query.SQL, conn, transaction);
                         AddParameters(command, query);
+                        DumpSqlAndParamsToLog(query);
                         query.RowCount = command.ExecuteNonQuery();
                         ProcessIdentityColumn(query, conn, transaction);
                     }
@@ -101,6 +94,7 @@ namespace CSharpQueryHelper
                 conn.Open();
                 var command = CreateCommand(query.SQL, conn);
                 AddParameters(command, query);
+                DumpSqlAndParamsToLog(query);
                 query.RowCount = command.ExecuteNonQuery();
                 ProcessIdentityColumn(query, conn);
                 conn.Close();
@@ -121,6 +115,7 @@ namespace CSharpQueryHelper
                 conn.Open();
                 var command = CreateCommand(query.SQL, conn);
                 AddParameters(command, query);
+                DumpSqlAndParamsToLog(query);
                 var result = command.ExecuteScalar();
                 query.RowCount = 1;
                 if (result != DBNull.Value)
@@ -148,6 +143,7 @@ namespace CSharpQueryHelper
                 conn.Open();
                 var command = CreateCommand(query.SQL, conn);
                 AddParameters(command, query);
+                DumpSqlAndParamsToLog(query);
                 using (var reader = command.ExecuteReader())
                 {
                     while (reader.Read())
@@ -175,39 +171,47 @@ namespace CSharpQueryHelper
         private int GetIdentity(DbConnection connection, DbTransaction transaction = null)
         {
             DbCommand command;
+            var sql = string.Empty;
+
             if (this.DataProvider.Contains("SqlServerCe"))
             {
-                command = CreateCommand("SELECT @@IDENTITY;", connection, transaction);
-                object newId = command.ExecuteScalar();
-                if (newId != DBNull.Value)
-                {
-                    decimal id = (decimal)newId;
-                    return (int)id;
-                }
+                sql = "SELECT @@IDENTITY;";
             }
             else if (this.DataProvider.Contains("SqlServer"))
             {
-                command = CreateCommand("SELECT SCOPE_IDENTITY();", connection, transaction);
-                object newId = command.ExecuteScalar();
-                if (newId != DBNull.Value)
-                {
-                    decimal id = (decimal)newId;
-                    return (int)id;
-                }
+                sql = "SELECT SCOPE_IDENTITY();";
             }
             else if (this.DataProvider.Contains("SQLite"))
             {
-                command = CreateCommand("SELECT last_insert_rowid();", connection, transaction);
-                object newId = command.ExecuteScalar();
-                if (newId != DBNull.Value)
-                {
-                    long id = (long)newId;
-                    return (int)id;
-                }
+                sql = "SELECT last_insert_rowid();";
             }
             else
             {
                 throw new ApplicationException("Unknown provider type for retrieving identity column.");
+            }
+
+            command = CreateCommand(sql, connection, transaction);
+            LogDebug("About to execute \"" + sql +"\".");
+            object newId = command.ExecuteScalar();
+            if (newId != DBNull.Value)
+            {
+                if (newId is System.Decimal)
+                {
+                    decimal id = (decimal)newId;
+                    return (int)id;
+                }
+                else if (newId is Int32)
+                {
+                    return (int)newId;
+                }
+                else if (newId is Int64)
+                {
+                    return (int)newId;
+                }
+                else
+                {
+                    return int.Parse(newId.ToString());
+                }
             }
             return -1;
         }
@@ -251,25 +255,46 @@ namespace CSharpQueryHelper
             return command;
         }
 
+        private void DumpSqlAndParamsToLog(SQLQuery query)
+        {
+            if (LogMessage == null || !DebugLoggingEnabled) return;
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.AppendFormat("About to execute \"{0}\" ", query.SQL);
+            if (query.Parameters.Count > 0)
+            {
+                sb.Append(" with parameters:\r\n");
+                foreach (string key in query.Parameters.Keys)
+                {
+                    sb.AppendFormat("{0}={1} with type {2}.\r\n", key, query.Parameters[key], query.Parameters[key].GetType());
+                }
+            }
+            else
+            {
+                sb.Append(" with no parameters.");
+            }
+            LogDebug(sb.ToString());
+        }
+
         private void LogWarn(string message)
         {
-            if (Logger != null && Logger.WarnEnabled)
+            if (LogMessage != null)
             {
-                Logger.Warn(message);
+                LogMessage(message, System.Diagnostics.TraceEventType.Warning);
             }
         }
         private void LogError(string message)
         {
-            if (Logger != null && Logger.ErrorEnabled)
+            if (LogMessage != null)
             {
-                Logger.Error(message);
+                LogMessage(message, System.Diagnostics.TraceEventType.Error);
             }
         }
         private void LogDebug(string message)
         {
-            if (Logger != null && Logger.DebugEnabled)
+            if (LogMessage != null && DebugLoggingEnabled)
             {
-                Logger.Debug(message);
+                LogMessage(message, System.Diagnostics.TraceEventType.Verbose);
             }
         }
     }
