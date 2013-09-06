@@ -9,6 +9,8 @@ namespace CSharpQueryHelper
 {
     public interface IQueryHelper
     {
+        Action<string, System.Diagnostics.TraceEventType> LogMessage { get; set; }
+        bool DebugLoggingEnabled { get; set; }
         void NonQueryToDBWithTransaction(IEnumerable<NonQueryWithParameters> queries);
         void NonQueryToDB(NonQueryWithParameters query);
         T ReadScalerDataFromDB<T>(string sql);
@@ -61,8 +63,8 @@ namespace CSharpQueryHelper
                     transaction = conn.BeginTransaction();
                     foreach (var query in queries.OrderBy(q=>q.Order))
                     {
-                        var command = CreateCommand(query.SQL, conn, transaction);
-                        AddParameters(command, query);
+                        var command = CreateCommand(query, conn, transaction);
+                        //AddParameters(command, query);
                         DumpSqlAndParamsToLog(query);
                         query.RowCount = command.ExecuteNonQuery();
                         ProcessIdentityColumn(query, conn, transaction);
@@ -92,8 +94,8 @@ namespace CSharpQueryHelper
             using (var conn = CreateConnection())
             {
                 conn.Open();
-                var command = CreateCommand(query.SQL, conn);
-                AddParameters(command, query);
+                var command = CreateCommand(query, conn);
+                //AddParameters(command, query);
                 DumpSqlAndParamsToLog(query);
                 query.RowCount = command.ExecuteNonQuery();
                 ProcessIdentityColumn(query, conn);
@@ -113,8 +115,8 @@ namespace CSharpQueryHelper
             using (conn)
             {
                 conn.Open();
-                var command = CreateCommand(query.SQL, conn);
-                AddParameters(command, query);
+                var command = CreateCommand(query, conn);
+                //AddParameters(command, query);
                 DumpSqlAndParamsToLog(query);
                 var result = command.ExecuteScalar();
                 query.RowCount = 1;
@@ -141,8 +143,8 @@ namespace CSharpQueryHelper
             using (var conn = CreateConnection())
             {
                 conn.Open();
-                var command = CreateCommand(query.SQL, conn);
-                AddParameters(command, query);
+                var command = CreateCommand(query, conn);
+                //AddParameters(command, query);
                 DumpSqlAndParamsToLog(query);
                 using (var reader = command.ExecuteReader())
                 {
@@ -189,8 +191,8 @@ namespace CSharpQueryHelper
             {
                 throw new ApplicationException("Unknown provider type for retrieving identity column.");
             }
-
-            command = CreateCommand(sql, connection, transaction);
+            var query = new SQLQueryWithParameters(sql);
+            command = CreateCommand(query, connection, transaction);
             LogDebug("About to execute \"" + sql +"\".");
             object newId = command.ExecuteScalar();
             if (newId != DBNull.Value)
@@ -222,6 +224,22 @@ namespace CSharpQueryHelper
             {
                 query.BuildParameters(query);
             }
+            foreach (string paramName in query.InParameters.Keys)
+            {
+                if (query.InParameters[paramName] != null && query.InParameters[paramName].Any() && query.ModifiedSQL.Contains("@"+paramName))
+                {
+                    var parameterDictionary = new Dictionary<string, object>();
+                    foreach (var value in query.InParameters[paramName])
+                    {
+                        parameterDictionary.Add(string.Format("{0}{1}", paramName, parameterDictionary.Count), value);
+                    }
+                    query.ModifiedSQL = query.ModifiedSQL.Replace("@" + paramName, string.Join(",", parameterDictionary.Select(pd => "@"+pd.Key)));
+                    foreach (var parameter in parameterDictionary.Keys)
+                    {
+                        query.Parameters.Add(parameter, parameterDictionary[parameter]);
+                    }
+                }
+            }
             foreach (string paramName in query.Parameters.Keys)
             {
                 command.Parameters.Add(CreateParameter(paramName, query.Parameters[paramName]));
@@ -243,11 +261,12 @@ namespace CSharpQueryHelper
             return connection;
         }
 
-        private DbCommand CreateCommand(string sql, DbConnection connection, DbTransaction transaction = null)
+        private DbCommand CreateCommand(SQLQuery query, DbConnection connection, DbTransaction transaction = null)
         {
             var command = DbFactory.CreateCommand();
             command.Connection = connection;
-            command.CommandText = sql;
+            AddParameters(command, query);
+            command.CommandText = query.ModifiedSQL;
             if (transaction != null)
             {
                 command.Transaction = transaction;
@@ -260,7 +279,7 @@ namespace CSharpQueryHelper
             if (LogMessage == null || !DebugLoggingEnabled) return;
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            sb.AppendFormat("About to execute \"{0}\" ", query.SQL);
+            sb.AppendFormat("About to execute \"{0}\" ", query.ModifiedSQL);
             if (query.Parameters.Count > 0)
             {
                 sb.Append(" with parameters:\r\n");
@@ -300,12 +319,16 @@ namespace CSharpQueryHelper
     }
     public abstract class SQLQuery {
         public SQLQuery(string sql) {
-            this.SQL = sql;
+            this.OriginalSQL = sql;
+            this.ModifiedSQL = OriginalSQL;
             Parameters = new Dictionary<string, object>();
+            InParameters = new Dictionary<string, List<object>>();
         }
         public readonly Dictionary<string, object> Parameters;
+        public readonly Dictionary<string, List<object>> InParameters;
         public Action<SQLQuery> BuildParameters { get; set; }
-        public readonly string SQL;
+        public readonly string OriginalSQL;
+        public string ModifiedSQL { get; set; }
         public int RowCount { get; set; }
     }
 

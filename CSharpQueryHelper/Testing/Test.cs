@@ -17,6 +17,8 @@ namespace CSharpQueryHelper
         string connectionString = "connString";
         string provider = "SqlServerCe";
         string sqlString = "select someColumn from someTable;";
+        string sqlInString = "select someColumn from someTable where someColumn in (@inParam);";
+        string sqlInStringAfterProcessing = "select someColumn from someTable where someColumn in (@inParam0,@inParam1,@inParam2,@inParam3);";
         string logMessage;
         System.Diagnostics.TraceEventType logLevel;
 
@@ -144,6 +146,36 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
 
+            Assert.AreEqual(1, query.RowCount);
+            dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
+        }
+
+        [Test]
+        public void ReadSingleRowWithInParameters()
+        {
+            var dataContainer = new TestDataContainer();
+
+            var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
+            dataReader.CallBase = true;
+            dataReader.Setup(dr => dr.Close());
+
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
+
+            var query = new SQLQueryWithParameters(sqlInString, dataContainer.ProcessRow);
+            query.Parameters.Add("param1", "value1");
+            query.Parameters.Add("param2", "value2");
+            query.Parameters.Add("param3", 333);
+            var inList = new List<object>();
+            inList.AddRange(new string[] { "val1", "val2", "val3", "val4" });
+            query.InParameters.Add("inParam", inList);
+            queryHelper.ReadDataFromDB(query);
+
+            dataContainer.AssertData();
+            VerifyLogging(sqlInStringAfterProcessing);
+
+            Assert.AreEqual(sqlInStringAfterProcessing, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(7));
             Assert.AreEqual(1, query.RowCount);
             dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
         }
