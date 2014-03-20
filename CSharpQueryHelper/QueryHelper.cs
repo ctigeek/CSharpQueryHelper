@@ -4,6 +4,7 @@ using System.Data;
 using System.Data.Common;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CSharpQueryHelper
 {
@@ -64,7 +65,6 @@ namespace CSharpQueryHelper
                     foreach (var query in queries.OrderBy(q=>q.Order))
                     {
                         var command = CreateCommand(query, conn, transaction);
-                        //AddParameters(command, query);
                         DumpSqlAndParamsToLog(query);
                         query.RowCount = command.ExecuteNonQuery();
                         ProcessIdentityColumn(query, conn, transaction);
@@ -88,6 +88,55 @@ namespace CSharpQueryHelper
             }
         }
 
+        public async Task NonQueryToDBWithTransactionAsync(IEnumerable<NonQueryWithParameters> queries)
+        {
+            DbTransaction transaction = null;
+            try
+            {
+                using (var conn = CreateConnection())
+                {
+                    await conn.OpenAsync();
+                    transaction = conn.BeginTransaction();
+                    foreach (var query in queries.OrderBy(q => q.Order))
+                    {
+                        var command = CreateCommand(query, conn, transaction);
+                        DumpSqlAndParamsToLog(query);
+                        query.RowCount = await command.ExecuteNonQueryAsync();
+                        await ProcessIdentityColumnAsync(query, conn, transaction);
+                    }
+                    transaction.Commit();
+                    transaction = null;
+                    conn.Close();
+                }
+            }
+            catch (Exception)
+            {
+                try
+                {
+                    if (transaction != null)
+                    {
+                        transaction.Rollback();
+                    }
+                }
+                catch { }
+                throw;
+            }
+        }
+
+        public async Task NonQueryToDBAsync(NonQueryWithParameters query)
+        {
+            query.RowCount = 0;
+            using (var conn = CreateConnection())
+            {
+                await conn.OpenAsync();
+                var command = CreateCommand(query, conn);
+                DumpSqlAndParamsToLog(query);
+                query.RowCount = await command.ExecuteNonQueryAsync();
+                await ProcessIdentityColumnAsync(query, conn);
+                conn.Close();
+            }
+        }
+
         public void NonQueryToDB(NonQueryWithParameters query)
         {
             query.RowCount = 0;
@@ -95,7 +144,6 @@ namespace CSharpQueryHelper
             {
                 conn.Open();
                 var command = CreateCommand(query, conn);
-                //AddParameters(command, query);
                 DumpSqlAndParamsToLog(query);
                 query.RowCount = command.ExecuteNonQuery();
                 ProcessIdentityColumn(query, conn);
@@ -116,27 +164,80 @@ namespace CSharpQueryHelper
             {
                 conn.Open();
                 var command = CreateCommand(query, conn);
-                //AddParameters(command, query);
                 DumpSqlAndParamsToLog(query);
                 var result = command.ExecuteScalar();
                 query.RowCount = 1;
-                if (result != DBNull.Value)
-                {
-                    if (result is T)
-                    {
-                        returnResult = (T)result;
-                    }
-                    else if (typeof(T) == typeof(string))
-                    {
-                        object stringResult = (object)result.ToString();
-                        returnResult = (T)stringResult;
-                    }
-                }
+                returnResult = ProcessScalerResult<T>(result);
+                conn.Close();
+            }
+            return returnResult;
+        }
+
+        public async Task<T> ReadScalerDataFromDBAsync<T>(string sql)
+        {
+            return await ReadScalerDataFromDBAsync<T>(new SQLQueryWithParameters(sql, null));
+        }
+        
+        public async Task<T> ReadScalerDataFromDBAsync<T>(SQLQueryWithParameters query)
+        {
+            var conn = CreateConnection();
+            T returnResult = default(T);
+            using (conn)
+            {
+                await conn.OpenAsync();
+                var command = CreateCommand(query, conn);
+                DumpSqlAndParamsToLog(query);
+                var result = await command.ExecuteScalarAsync();
+                query.RowCount = 1;
+                returnResult = ProcessScalerResult<T>(result);
                 conn.Close();
             }
             return returnResult;
         }
         
+        public T ProcessScalerResult<T>(object result)
+        {
+            T returnResult = default(T);
+            if (result != DBNull.Value)
+            {
+                if (result is T)
+                {
+                    returnResult = (T)result;
+                }
+                else if (typeof(T) == typeof(string))
+                {
+                    object stringResult = (object)result.ToString();
+                    returnResult = (T)stringResult;
+                }
+            }
+            return returnResult;
+        }
+
+        public async Task ReadDataFromDBAsync(SQLQueryWithParameters query)
+        {
+            query.RowCount = 0;
+            using (var conn = CreateConnection())
+            {
+                await conn.OpenAsync();
+                
+                var command = CreateCommand(query, conn);
+                DumpSqlAndParamsToLog(query);
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        query.RowCount++;
+                        if (!query.ProcessRow(reader))
+                        {
+                            break;
+                        }
+                    }
+                    reader.Close();
+                }
+                conn.Close();
+            }
+        }
+
         public void ReadDataFromDB(SQLQueryWithParameters query)
         {
             query.RowCount = 0;
@@ -144,7 +245,6 @@ namespace CSharpQueryHelper
             {
                 conn.Open();
                 var command = CreateCommand(query, conn);
-                //AddParameters(command, query);
                 DumpSqlAndParamsToLog(query);
                 using (var reader = command.ExecuteReader())
                 {
@@ -166,13 +266,71 @@ namespace CSharpQueryHelper
         {
             if (query.SetPrimaryKey != null)
             {
-                query.SetPrimaryKey(GetIdentity(conn, transaction), query);
+                var identity = GetIdentity(conn, transaction);
+                query.SetPrimaryKey(identity, query);
+            }
+        }
+
+        private async Task ProcessIdentityColumnAsync(NonQueryWithParameters query, DbConnection conn, DbTransaction transaction = null)
+        {
+            if (query.SetPrimaryKey != null)
+            {
+                var identity = await GetIdentityAsync(conn, transaction);
+                query.SetPrimaryKey(identity, query);
             }
         }
 
         private int GetIdentity(DbConnection connection, DbTransaction transaction = null)
         {
             DbCommand command;
+            var sql = GetIdentitySql();
+            var query = new SQLQueryWithParameters(sql);
+            command = CreateCommand(query, connection, transaction);
+            LogDebug("About to execute \"" + sql +"\".");
+            object result = command.ExecuteScalar();
+            int identity = GetIdentityFromResult(result);
+            return identity;
+        }
+
+        private async Task<int> GetIdentityAsync(DbConnection connection, DbTransaction transaction = null)
+        {
+            DbCommand command;
+            var sql = GetIdentitySql();
+            var query = new SQLQueryWithParameters(sql);
+            command = CreateCommand(query, connection, transaction);
+            LogDebug("About to execute \"" + sql + "\".");
+            object result = await command.ExecuteScalarAsync();
+            int identity = GetIdentityFromResult(result);
+            return identity;
+        }
+
+        private int GetIdentityFromResult(object result)
+        {
+            if (result != DBNull.Value)
+            {
+                if (result is System.Decimal)
+                {
+                    decimal id = (decimal)result;
+                    return (int)id;
+                }
+                else if (result is Int32)
+                {
+                    return (int)result;
+                }
+                else if (result is Int64)
+                {
+                    return (int)result;
+                }
+                else
+                {
+                    return int.Parse(result.ToString());
+                }
+            }
+            return -1;
+        }
+
+        private string GetIdentitySql()
+        {
             var sql = string.Empty;
 
             if (this.DataProvider.Contains("SqlServerCe"))
@@ -191,31 +349,7 @@ namespace CSharpQueryHelper
             {
                 throw new ApplicationException("Unknown provider type for retrieving identity column.");
             }
-            var query = new SQLQueryWithParameters(sql);
-            command = CreateCommand(query, connection, transaction);
-            LogDebug("About to execute \"" + sql +"\".");
-            object newId = command.ExecuteScalar();
-            if (newId != DBNull.Value)
-            {
-                if (newId is System.Decimal)
-                {
-                    decimal id = (decimal)newId;
-                    return (int)id;
-                }
-                else if (newId is Int32)
-                {
-                    return (int)newId;
-                }
-                else if (newId is Int64)
-                {
-                    return (int)newId;
-                }
-                else
-                {
-                    return int.Parse(newId.ToString());
-                }
-            }
-            return -1;
+            return sql;
         }
 
         private void AddParameters(DbCommand command, SQLQuery query)
@@ -317,6 +451,7 @@ namespace CSharpQueryHelper
             }
         }
     }
+    
     public abstract class SQLQuery {
         public SQLQuery(string sql) {
             this.OriginalSQL = sql;
@@ -331,7 +466,6 @@ namespace CSharpQueryHelper
         public string ModifiedSQL { get; set; }
         public int RowCount { get; set; }
     }
-
     public class SQLQueryWithParameters : SQLQuery
     {
         public SQLQueryWithParameters(string sql)

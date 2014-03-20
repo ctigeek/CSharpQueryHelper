@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Moq;
+using Moq.Protected;
 
 namespace CSharpQueryHelper
 {
@@ -13,7 +14,7 @@ namespace CSharpQueryHelper
     {
         public static Mock<DbTransaction> DbTransaction { get; set; }
         public static Mock<MoqDbConnection> DbConnection { get; set; }
-        public static Mock<MoqDbCommand> DbCommand { get; set; }
+        public static Mock<DbCommand> DbCommand { get; set; }
         public static Mock<DbParameter> DbParameter { get; set; }
         public static Mock<DbParameterCollection> Parameters { get; set; }
 
@@ -61,11 +62,23 @@ namespace CSharpQueryHelper
             parameters.Setup(p => p.Add(It.IsAny<DbParameter>()));
             return parameters;
         }
-        public static Mock<MoqDbCommand> CreateDbCommand(DbDataReader dataReader = null)
+        public static Mock<DbCommand> CreateDbCommand(DbDataReader dataReader = null)
         {
-            var dbCommand = (dataReader == null) ?
-                new Mock<MoqDbCommand>(Parameters.Object) :
-                new Mock<MoqDbCommand>(Parameters.Object, dataReader);
+            var dbCommand = new Mock<DbCommand>();
+            //http://blogs.clariusconsulting.net/kzu/mocking-protected-members-with-moq/
+            if (dataReader != null)
+            {
+                dbCommand.Protected()
+                    .Setup<DbDataReader>("ExecuteDbDataReader", It.IsAny<CommandBehavior>())
+                    .Returns(dataReader);
+                dbCommand.Protected()
+                    .Setup<Task<DbDataReader>>("ExecuteDbDataReaderAsync", It.IsAny<CommandBehavior>(), It.IsAny<System.Threading.CancellationToken>())
+                    .Returns(Task.FromResult<DbDataReader>(dataReader));
+            }
+            dbCommand.Protected()
+                .SetupGet<DbParameterCollection>("DbParameterCollection")
+                .Returns(Parameters.Object);
+
             dbCommand.CallBase = true;
             dbCommand.SetupProperty(dbc => dbc.CommandText);
             return dbCommand;
@@ -77,33 +90,6 @@ namespace CSharpQueryHelper
         protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {
             return MockDatabaseFactory.DbTransaction.Object;
-        }
-    }
-
-    public abstract class MoqDbCommand : DbCommand
-    {
-        public DbDataReader DataReader { get; private set; }
-
-        public MoqDbCommand(DbParameterCollection parameters)
-        {
-            this.parameters = parameters;
-        }
-        public MoqDbCommand(DbParameterCollection parameters, DbDataReader dataReader) :
-            this(parameters)
-        {
-            this.DataReader = dataReader;
-        }
-
-        private DbParameterCollection parameters;
-        
-        protected override DbParameterCollection DbParameterCollection
-        {
-            get { return parameters; }
-        }
-
-        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
-        {
-            return DataReader;
         }
     }
 

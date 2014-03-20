@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Moq;
+using Moq.Protected;
 using NUnit.Framework;
 
 namespace CSharpQueryHelper
@@ -58,6 +59,27 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
         }
+
+        [Test]
+        public void ReadScalerReturnsAStringAsync()
+        {
+            string scalerReturn = "This is the return value2.";
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
+                    .ReturnsAsync(scalerReturn);
+            var query = new SQLQueryWithParameters(sqlString);
+            var task = queryHelper.ReadScalerDataFromDBAsync<string>(query);
+            task.Wait();
+            var returnValue = task.Result;
+
+            Assert.AreEqual(scalerReturn, returnValue);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
+        }
+
         [Test]
         public void ReadScalerReturnsAStringUsingSQLString()
         {
@@ -72,6 +94,25 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
+        }
+
+        [Test]
+        public void ReadScalerReturnsAStringUsingSQLStringAsync()
+        {
+            string scalerReturn = "This is the return value.";
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
+                    .ReturnsAsync(scalerReturn);
+            var task = queryHelper.ReadScalerDataFromDBAsync<string>(sqlString);
+            task.Wait();
+            var returnValue = task.Result;
+
+            Assert.AreEqual(scalerReturn, returnValue);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
         }
 
         [Test]
@@ -93,6 +134,32 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
+        }
+
+        [Test]
+        public void ReadScalerReturnsAStringWithParametersAsync()
+        {
+            string scalerReturn = "This is the return value.";
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
+                    .ReturnsAsync(scalerReturn);
+
+            var query = new SQLQueryWithParameters(sqlString);
+            query.Parameters.Add("param1", "value1");
+            query.Parameters.Add("param2", "value2");
+            query.Parameters.Add("param3", 333);
+            var task = queryHelper.ReadScalerDataFromDBAsync<string>(query);
+            task.Wait();
+            var returnValue = task.Result;
+
+            Assert.AreEqual(scalerReturn, returnValue);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
         }
 
         [Test]
@@ -109,6 +176,27 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
+        }
+
+        [Test]
+        public void ReadScalerIntReturnedAsStringAsync()
+        {
+            int scalerReturn = 555;
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
+                    .ReturnsAsync(scalerReturn);
+            var query = new SQLQueryWithParameters(sqlString);
+            var task = queryHelper.ReadScalerDataFromDBAsync<string>(query);
+            task.Wait();
+            var returnValue = task.Result;
+
+            Assert.AreEqual(scalerReturn.ToString(), returnValue);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
         }
 
         [Test]
@@ -125,6 +213,27 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
+        }
+
+        [Test]
+        public void ReadScalerDbNullReturnsNullObjectAsync()
+        {
+            DBNull scalerReturn = DBNull.Value;
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
+                    .ReturnsAsync(scalerReturn);
+            var query = new SQLQueryWithParameters(sqlString);
+            var task = queryHelper.ReadScalerDataFromDBAsync<string>(query);
+            task.Wait();
+            var returnValue = task.Result;
+
+            Assert.IsNull(returnValue);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Open(), Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
         }
 
         [Test]
@@ -135,7 +244,6 @@ namespace CSharpQueryHelper
             var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
             dataReader.CallBase = true;
             dataReader.Setup(dr => dr.Close());
-
             MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
 
             var query = new SQLQueryWithParameters(sqlString, dataContainer.ProcessRow);
@@ -145,7 +253,31 @@ namespace CSharpQueryHelper
             VerifyLogging(sqlString);
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+            MockDatabaseFactory.DbCommand.Protected()
+                .Verify<DbDataReader>("ExecuteDbDataReader", Times.Exactly(1), It.IsAny<CommandBehavior>());
+            Assert.AreEqual(1, query.RowCount);
+            dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
+        }
 
+        [Test]
+        public void ReadSingleRowNoParametersAsync()
+        {
+            var dataContainer = new TestDataContainer();
+            var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
+            dataReader.CallBase = true;
+            dataReader.Setup(dr => dr.Close());
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
+
+            var query = new SQLQueryWithParameters(sqlString, dataContainer.ProcessRow);
+            var task = queryHelper.ReadDataFromDBAsync(query);
+            task.Wait();
+
+            dataContainer.AssertData();
+            VerifyLogging(sqlString);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+            MockDatabaseFactory.DbCommand.Protected()
+                .Verify<Task<DbDataReader>>("ExecuteDbDataReaderAsync", Times.Exactly(1), It.IsAny<CommandBehavior>(), It.IsAny<System.Threading.CancellationToken>());
             Assert.AreEqual(1, query.RowCount);
             dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
         }
@@ -158,7 +290,6 @@ namespace CSharpQueryHelper
             var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
             dataReader.CallBase = true;
             dataReader.Setup(dr => dr.Close());
-
             MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
 
             var query = new SQLQueryWithParameters(sqlInString, dataContainer.ProcessRow);
@@ -176,6 +307,40 @@ namespace CSharpQueryHelper
             Assert.AreEqual(sqlInStringAfterProcessing, MockDatabaseFactory.DbCommand.Object.CommandText);
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(7));
+            MockDatabaseFactory.DbCommand.Protected()
+                .Verify<DbDataReader>("ExecuteDbDataReader", Times.Exactly(1), It.IsAny<CommandBehavior>());
+            Assert.AreEqual(1, query.RowCount);
+            dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
+        }
+
+        [Test]
+        public void ReadSingleRowWithInParametersAsync()
+        {
+            var dataContainer = new TestDataContainer();
+
+            var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
+            dataReader.CallBase = true;
+            dataReader.Setup(dr => dr.Close());
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
+
+            var query = new SQLQueryWithParameters(sqlInString, dataContainer.ProcessRow);
+            query.Parameters.Add("param1", "value1");
+            query.Parameters.Add("param2", "value2");
+            query.Parameters.Add("param3", 333);
+            var inList = new List<object>();
+            inList.AddRange(new string[] { "val1", "val2", "val3", "val4" });
+            query.InParameters.Add("inParam", inList);
+            var task = queryHelper.ReadDataFromDBAsync(query);
+            task.Wait();
+
+            dataContainer.AssertData();
+            VerifyLogging(sqlInStringAfterProcessing);
+
+            Assert.AreEqual(sqlInStringAfterProcessing, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(7));
+            MockDatabaseFactory.DbCommand.Protected()
+                            .Verify<Task<DbDataReader>>("ExecuteDbDataReaderAsync", Times.Exactly(1), It.IsAny<CommandBehavior>(), It.IsAny<System.Threading.CancellationToken>()); 
             Assert.AreEqual(1, query.RowCount);
             dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
         }
@@ -202,7 +367,37 @@ namespace CSharpQueryHelper
             Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            MockDatabaseFactory.DbCommand.Protected()
+                .Verify<DbDataReader>("ExecuteDbDataReader", Times.Exactly(1), It.IsAny<CommandBehavior>());
+            Assert.AreEqual(1, query.RowCount);
+            dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
+        }
 
+        [Test]
+        public void ReadSingleRowWithParametersAsync()
+        {
+            var dataContainer = new TestDataContainer();
+            var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
+            dataReader.CallBase = true;
+            dataReader.Setup(dr => dr.Close());
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
+
+            var query = new SQLQueryWithParameters(sqlString, dataContainer.ProcessRow);
+            query.Parameters.Add("param1", "value1");
+            query.Parameters.Add("param2", "value2");
+            query.Parameters.Add("param3", 333);
+            var task = queryHelper.ReadDataFromDBAsync(query);
+            task.Wait();
+
+            dataContainer.AssertData();
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            MockDatabaseFactory.DbCommand.Protected()
+                            .Verify<Task<DbDataReader>>("ExecuteDbDataReaderAsync", Times.Exactly(1), It.IsAny<CommandBehavior>(), It.IsAny<System.Threading.CancellationToken>());
+            MockDatabaseFactory.DbCommand.Protected()
+                .VerifyGet<DbParameterCollection>("DbParameterCollection", Times.Exactly(3));
             Assert.AreEqual(1, query.RowCount);
             dataReader.Verify(dr => dr.Read(), Times.Exactly(2));
         }
@@ -215,6 +410,23 @@ namespace CSharpQueryHelper
 
             var query = new NonQueryWithParameters(sqlString);
             
+            queryHelper.NonQueryToDB(query);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQuery(), Times.Exactly(1));
+            Assert.AreEqual(432, query.RowCount);
+        }
+
+        [Test]
+        public void NonQueryTestNoParametersNoIdentityAsync()
+        {
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand();
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQuery()).Returns(432);
+
+            var query = new NonQueryWithParameters(sqlString);
+
             queryHelper.NonQueryToDB(query);
             VerifyLogging(sqlString);
             Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
