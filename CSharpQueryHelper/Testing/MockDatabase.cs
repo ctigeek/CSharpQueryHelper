@@ -31,6 +31,14 @@ namespace CSharpQueryHelper
             return DbParameter.Object;
         }
 
+        public static Mock<MoqDataReader> CreateDbDataReader(TestDataContainer dataContainer)
+        {
+            var dataReader = new Mock<MoqDataReader>(dataContainer.dataRow);
+            dataReader.CallBase = true;
+            dataReader.Setup(dr => dr.Close());
+            MockDatabaseFactory.DbCommand = MockDatabaseFactory.CreateDbCommand(dataReader.Object);
+            return dataReader;
+        }
         public static Mock<DbTransaction> CreateDbTransaction()
         {
             var dbTransaction = new Mock<DbTransaction>();
@@ -62,6 +70,15 @@ namespace CSharpQueryHelper
             parameters.Setup(p => p.Add(It.IsAny<DbParameter>()));
             return parameters;
         }
+        public static void SetScalerReturnValue(object value)
+        {
+            if (MockDatabaseFactory.DbCommand != null)
+            {
+                MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalar()).Returns(value);
+                MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
+                   .ReturnsAsync(value);
+            }
+        }
         public static Mock<DbCommand> CreateDbCommand(DbDataReader dataReader = null)
         {
             var dbCommand = new Mock<DbCommand>();
@@ -75,6 +92,11 @@ namespace CSharpQueryHelper
                     .Setup<Task<DbDataReader>>("ExecuteDbDataReaderAsync", It.IsAny<CommandBehavior>(), It.IsAny<System.Threading.CancellationToken>())
                     .Returns(Task.FromResult<DbDataReader>(dataReader));
             }
+            dbCommand.Setup(dbc => dbc.ExecuteNonQuery())
+                        .Returns(543);
+            dbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                        .ReturnsAsync(345);
+
             dbCommand.Protected()
                 .SetupGet<DbParameterCollection>("DbParameterCollection")
                 .Returns(Parameters.Object);
