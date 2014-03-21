@@ -13,10 +13,15 @@ namespace CSharpQueryHelper
         Action<string, System.Diagnostics.TraceEventType> LogMessage { get; set; }
         bool DebugLoggingEnabled { get; set; }
         void NonQueryToDBWithTransaction(IEnumerable<NonQueryWithParameters> queries);
+        Task NonQueryToDBWithTransactionAsync(IEnumerable<NonQueryWithParameters> queries);
         void NonQueryToDB(NonQueryWithParameters query);
+        Task NonQueryToDBAsync(NonQueryWithParameters query);
         T ReadScalerDataFromDB<T>(string sql);
+        Task<T> ReadScalerDataFromDBAsync<T>(string sql);
         T ReadScalerDataFromDB<T>(SQLQueryWithParameters query);
+        Task<T> ReadScalerDataFromDBAsync<T>(SQLQueryWithParameters query);
         void ReadDataFromDB(SQLQueryWithParameters query);
+        Task ReadDataFromDBAsync(SQLQueryWithParameters query);
     }
 
     public class QueryHelper : IQueryHelper
