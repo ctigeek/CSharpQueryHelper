@@ -12,16 +12,17 @@ namespace CSharpQueryHelper
     {
         Action<string, System.Diagnostics.TraceEventType> LogMessage { get; set; }
         bool DebugLoggingEnabled { get; set; }
-        void NonQueryToDBWithTransaction(IEnumerable<NonQueryWithParameters> queries);
-        Task NonQueryToDBWithTransactionAsync(IEnumerable<NonQueryWithParameters> queries);
-        void NonQueryToDB(NonQueryWithParameters query);
-        Task NonQueryToDBAsync(NonQueryWithParameters query);
+
+        void NonQueryToDBWithTransaction(IEnumerable<SQLQuery> queries);
+        Task NonQueryToDBWithTransactionAsync(IEnumerable<SQLQuery> queries);
+        void NonQueryToDB(IEnumerable<SQLQuery> queries);
+        Task NonQueryToDBAsync(IEnumerable<SQLQuery> queries);
         T ReadScalerDataFromDB<T>(string sql);
         Task<T> ReadScalerDataFromDBAsync<T>(string sql);
-        T ReadScalerDataFromDB<T>(SQLQueryWithParameters query);
-        Task<T> ReadScalerDataFromDBAsync<T>(SQLQueryWithParameters query);
-        void ReadDataFromDB(SQLQueryWithParameters query);
-        Task ReadDataFromDBAsync(SQLQueryWithParameters query);
+        T ReadScalerDataFromDB<T>(SQLQuery query);
+        Task<T> ReadScalerDataFromDBAsync<T>(SQLQuery query);
+        void ReadDataFromDB(IEnumerable<SQLQuery> queries);
+        Task ReadDataFromDBAsync(IEnumerable<SQLQuery> queries);
     }
 
     public class QueryHelper : IQueryHelper
@@ -58,59 +59,67 @@ namespace CSharpQueryHelper
             DebugLoggingEnabled = false;
         }
 
-        public void NonQueryToDBWithTransaction(IEnumerable<NonQueryWithParameters> queries)
+        public void NonQueryToDBWithTransaction(IEnumerable<SQLQuery> queries)
         {
-            DbTransaction transaction = null;
-            try
-            {
-                using (var conn = CreateConnection())
-                {
-                    conn.Open();
-                    transaction = conn.BeginTransaction();
-                    foreach (var query in queries.OrderBy(q=>q.Order))
-                    {
-                        var command = CreateCommand(query, conn, transaction);
-                        DumpSqlAndParamsToLog(query);
-                        query.RowCount = command.ExecuteNonQuery();
-                        ProcessIdentityColumn(query, conn, transaction);
-                    }
-                    transaction.Commit();
-                    transaction = null;
-                    conn.Close();
-                }
-            }
-            catch (Exception)
-            {
-                try
-                {
-                    if (transaction != null)
-                    {
-                        transaction.Rollback();
-                    }
-                }
-                catch { }
-                throw;
-            }
+            NonQueryToDbAsync(SetQueryGroupsForSyncOperation(queries), true)
+                .Wait();
         }
 
-        public async Task NonQueryToDBWithTransactionAsync(IEnumerable<NonQueryWithParameters> queries)
+        public async Task NonQueryToDBWithTransactionAsync(IEnumerable<SQLQuery> queries)
         {
+            await NonQueryToDbAsync(queries, true);
+        }
+
+        public void NonQueryToDB(IEnumerable<SQLQuery> queries)
+        {
+            NonQueryToDbAsync(SetQueryGroupsForSyncOperation(queries), false)
+                .Wait();
+        }
+
+        public async Task NonQueryToDBAsync(IEnumerable<SQLQuery> queries)
+        {
+            await NonQueryToDbAsync(queries, false);
+        }
+
+        private async Task NonQueryToDbAsync(IEnumerable<SQLQuery> queries, bool withTransaction) {
             DbTransaction transaction = null;
             try
             {
                 using (var conn = CreateConnection())
                 {
                     await conn.OpenAsync();
-                    transaction = conn.BeginTransaction();
-                    foreach (var query in queries.OrderBy(q => q.Order))
+                    bool abort = false;
+                    if (withTransaction)
                     {
-                        var command = CreateCommand(query, conn, transaction);
-                        DumpSqlAndParamsToLog(query);
-                        query.RowCount = await command.ExecuteNonQueryAsync();
-                        await ProcessIdentityColumnAsync(query, conn, transaction);
+                        transaction = conn.BeginTransaction();
                     }
-                    transaction.Commit();
-                    transaction = null;
+                    foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
+                    {
+                        var taskList = new Dictionary<SQLQuery, Task<int>>();
+                        foreach (var query in queries.Where(q => q.GroupNumber == groupNum).OrderBy(q => q.OrderNumber))
+                        {
+                            query.PreQueryProcess(query);
+                            var command = CreateCommand(query, conn, transaction);
+                            DumpSqlAndParamsToLog(query);
+                            var task = command.ExecuteNonQueryAsync();
+                            taskList.Add(query, task);
+                        }
+                        await Task.WhenAll(taskList.Values);
+                        foreach (var query in taskList.Keys)
+                        {
+                            query.RowCount = taskList[query].Result;
+                            abort = abort || query.Postprocess(query);
+                        }
+                        if (abort)
+                        {
+                            break;
+                        }
+                    }
+                    if (transaction != null)
+                    {
+                        transaction.Commit();
+                        transaction = null;
+                    }
                     conn.Close();
                 }
             }
@@ -128,62 +137,37 @@ namespace CSharpQueryHelper
             }
         }
 
-        public async Task NonQueryToDBAsync(NonQueryWithParameters query)
+        private List<SQLQuery> SetQueryGroupsForSyncOperation(IEnumerable<SQLQuery> queries)
         {
-            query.RowCount = 0;
-            using (var conn = CreateConnection())
+            int groupNum = 1;
+            var queryList = queries.ToList();
+            foreach (var query in queryList)
             {
-                await conn.OpenAsync();
-                var command = CreateCommand(query, conn);
-                DumpSqlAndParamsToLog(query);
-                query.RowCount = await command.ExecuteNonQueryAsync();
-                await ProcessIdentityColumnAsync(query, conn);
-                conn.Close();
+                query.GroupNumber = groupNum;
+                query.OrderNumber = 1;
+                groupNum++;
             }
-        }
-
-        public void NonQueryToDB(NonQueryWithParameters query)
-        {
-            query.RowCount = 0;
-            using (var conn = CreateConnection())
-            {
-                conn.Open();
-                var command = CreateCommand(query, conn);
-                DumpSqlAndParamsToLog(query);
-                query.RowCount = command.ExecuteNonQuery();
-                ProcessIdentityColumn(query, conn);
-                conn.Close();
-            }
+            return queryList;
         }
 
         public T ReadScalerDataFromDB<T>(string sql)
         {
-            return ReadScalerDataFromDB<T>(new SQLQueryWithParameters(sql, null));
+            return ReadScalerDataFromDB<T>(new SQLQuery(sql));
         }
         
-        public T ReadScalerDataFromDB<T>(SQLQueryWithParameters query)
+        public T ReadScalerDataFromDB<T>(SQLQuery query)
         {
-            var conn = CreateConnection();
-            T returnResult = default(T);
-            using (conn)
-            {
-                conn.Open();
-                var command = CreateCommand(query, conn);
-                DumpSqlAndParamsToLog(query);
-                var result = command.ExecuteScalar();
-                query.RowCount = 1;
-                returnResult = ProcessScalerResult<T>(result);
-                conn.Close();
-            }
-            return returnResult;
+            var task = ReadScalerDataFromDBAsync<T>(query);
+            task.Wait();
+            return task.Result;
         }
 
         public async Task<T> ReadScalerDataFromDBAsync<T>(string sql)
         {
-            return await ReadScalerDataFromDBAsync<T>(new SQLQueryWithParameters(sql, null));
+            return await ReadScalerDataFromDBAsync<T>(new SQLQuery(sql));
         }
         
-        public async Task<T> ReadScalerDataFromDBAsync<T>(SQLQueryWithParameters query)
+        public async Task<T> ReadScalerDataFromDBAsync<T>(SQLQuery query)
         {
             var conn = CreateConnection();
             T returnResult = default(T);
@@ -191,9 +175,11 @@ namespace CSharpQueryHelper
             {
                 await conn.OpenAsync();
                 var command = CreateCommand(query, conn);
+                query.PreQueryProcess(query); 
                 DumpSqlAndParamsToLog(query);
                 var result = await command.ExecuteScalarAsync();
                 query.RowCount = 1;
+                query.Postprocess(query);
                 returnResult = ProcessScalerResult<T>(result);
                 conn.Close();
             }
@@ -218,7 +204,7 @@ namespace CSharpQueryHelper
             return returnResult;
         }
 
-        public async Task ReadDataFromDBAsync(SQLQueryWithParameters query)
+        public async Task ReadDataFromDBAsync(IEnumerable<SQLQuery> queries)
         {
             query.RowCount = 0;
             using (var conn = CreateConnection())
@@ -243,7 +229,7 @@ namespace CSharpQueryHelper
             }
         }
 
-        public void ReadDataFromDB(SQLQueryWithParameters query)
+        public void ReadDataFromDB(IEnumerable<SQLQuery> queries)
         {
             query.RowCount = 0;
             using (var conn = CreateConnection())
@@ -267,112 +253,28 @@ namespace CSharpQueryHelper
             }
         }
 
-        private void ProcessIdentityColumn(NonQueryWithParameters query, DbConnection conn, DbTransaction transaction = null)
-        {
-            if (query.SetPrimaryKey != null)
-            {
-                var identity = GetIdentity(conn, transaction);
-                query.SetPrimaryKey(identity, query);
-            }
-        }
-
-        private async Task ProcessIdentityColumnAsync(NonQueryWithParameters query, DbConnection conn, DbTransaction transaction = null)
-        {
-            if (query.SetPrimaryKey != null)
-            {
-                var identity = await GetIdentityAsync(conn, transaction);
-                query.SetPrimaryKey(identity, query);
-            }
-        }
-
-        private int GetIdentity(DbConnection connection, DbTransaction transaction = null)
-        {
-            DbCommand command;
-            var sql = GetIdentitySql();
-            var query = new SQLQueryWithParameters(sql);
-            command = CreateCommand(query, connection, transaction);
-            LogDebug("About to execute \"" + sql +"\".");
-            object result = command.ExecuteScalar();
-            int identity = GetIdentityFromResult(result);
-            return identity;
-        }
-
-        private async Task<int> GetIdentityAsync(DbConnection connection, DbTransaction transaction = null)
-        {
-            DbCommand command;
-            var sql = GetIdentitySql();
-            var query = new SQLQueryWithParameters(sql);
-            command = CreateCommand(query, connection, transaction);
-            LogDebug("About to execute \"" + sql + "\".");
-            object result = await command.ExecuteScalarAsync();
-            int identity = GetIdentityFromResult(result);
-            return identity;
-        }
-
-        private int GetIdentityFromResult(object result)
-        {
-            if (result != DBNull.Value)
-            {
-                if (result is System.Decimal)
-                {
-                    decimal id = (decimal)result;
-                    return (int)id;
-                }
-                else if (result is Int32)
-                {
-                    return (int)result;
-                }
-                else if (result is Int64)
-                {
-                    return (int)result;
-                }
-                else
-                {
-                    return int.Parse(result.ToString());
-                }
-            }
-            return -1;
-        }
-
-        private string GetIdentitySql()
-        {
-            var sql = string.Empty;
-
-            if (this.DataProvider.Contains("SqlServerCe"))
-            {
-                sql = "SELECT @@IDENTITY;";
-            }
-            else if (this.DataProvider.Contains("SqlServer"))
-            {
-                sql = "SELECT SCOPE_IDENTITY();";
-            }
-            else if (this.DataProvider.Contains("SQLite"))
-            {
-                sql = "SELECT last_insert_rowid();";
-            }
-            else
-            {
-                throw new ApplicationException("Unknown provider type for retrieving identity column.");
-            }
-            return sql;
-        }
+        //private void ProcessIdentityColumn(NonQueryWithParameters query, DbConnection conn, DbTransaction transaction = null)
+        //{
+        //    if (query.SetPrimaryKey != null)
+        //    {
+        //        var identity = GetIdentity(conn, transaction);
+        //        query.SetPrimaryKey(identity, query);
+        //    }
+        //}
 
         private void AddParameters(DbCommand command, SQLQuery query)
         {
-            if (query.BuildParameters != null)
-            {
-                query.BuildParameters(query);
-            }
             foreach (string paramName in query.InParameters.Keys)
             {
-                if (query.InParameters[paramName] != null && query.InParameters[paramName].Any() && query.ModifiedSQL.Contains("@"+paramName))
+                if (query.InParameters[paramName] != null && query.InParameters[paramName].Any() && query.ModifiedSQL.Contains("@" + paramName))
                 {
                     var parameterDictionary = new Dictionary<string, object>();
                     foreach (var value in query.InParameters[paramName])
                     {
                         parameterDictionary.Add(string.Format("{0}{1}", paramName, parameterDictionary.Count), value);
                     }
-                    query.ModifiedSQL = query.ModifiedSQL.Replace("@" + paramName, string.Join(",", parameterDictionary.Select(pd => "@"+pd.Key)));
+                    //TODO: this needs to be a regex otherwise it could be prone to replacing paramName that starts with the same name eg. @myvar & @myvar2.
+                    query.ModifiedSQL = query.ModifiedSQL.Replace("@" + paramName, string.Join(",", parameterDictionary.Select(pd => "@" + pd.Key)));
                     foreach (var parameter in parameterDictionary.Keys)
                     {
                         query.Parameters.Add(parameter, parameterDictionary[parameter]);
@@ -457,45 +359,119 @@ namespace CSharpQueryHelper
         }
     }
     
-    public abstract class SQLQuery {
+    public class SQLQuery {
         public SQLQuery(string sql) {
             this.OriginalSQL = sql;
             this.ModifiedSQL = OriginalSQL;
             Parameters = new Dictionary<string, object>();
             InParameters = new Dictionary<string, List<object>>();
+            GroupNumber = 0;
+            OrderNumber = 0;
         }
         public readonly Dictionary<string, object> Parameters;
         public readonly Dictionary<string, List<object>> InParameters;
-        public Action<SQLQuery> BuildParameters { get; set; }
         public readonly string OriginalSQL;
         public string ModifiedSQL { get; set; }
         public int RowCount { get; set; }
-    }
-    public class SQLQueryWithParameters : SQLQuery
-    {
-        public SQLQueryWithParameters(string sql)
-            : this(sql, null)
-        { }
-
-        public SQLQueryWithParameters(string sql,Func<DbDataReader, bool> processRow)
-            : base(sql)
+        public int GroupNumber { get; set; }
+        public int OrderNumber { get; set; }
+        private Action<SQLQuery> preQueryProcess;
+        public Action<SQLQuery> PreQueryProcess
         {
-            if (processRow == null)
+            get
             {
-                this.ProcessRow = new Func<DbDataReader, bool>(dr => { return true; });
+                if (preQueryProcess == null)
+                {
+                    preQueryProcess = new Action<SQLQuery>(query => { });
+                }
+                return preQueryProcess;
             }
-            this.ProcessRow = processRow;
+            set
+            {
+                preQueryProcess = value;
+            }
         }
-        public readonly Func<DbDataReader, bool> ProcessRow;
-    }
-    public class NonQueryWithParameters : SQLQuery
-    {
-        public NonQueryWithParameters(string sql)
-            : base(sql)
+        private Func<DbDataReader, bool> processRow;
+        public Func<DbDataReader, bool> ProcessRow {
+            get
+            {
+                if (processRow == null)
+                {
+                    processRow = new Func<DbDataReader, bool>(dr => { return true; });
+                }
+                return processRow;
+            }
+            set
+            {
+                processRow = value;
+            }
+        }
+        private Func<SQLQuery, bool> postprocess;
+        public Func<SQLQuery, bool> Postprocess
         {
+            get
+            {
+                if (postprocess == null)
+                {
+                    postprocess = new Func<SQLQuery, bool>(query => { return true; });
+                }
+                return postprocess;
+            }
+            set
+            {
+                postprocess = value;
+            }
         }
-        public Action<int, NonQueryWithParameters> SetPrimaryKey { get; set; }
-        public int Order { get; set; }
-        public object Tag { get; set; }
     }
+    //public class SQLQuery<T> : SQLQuery
+    //{
+    //    public readonly T Graph;
+    //    public SQLQuery(string sql, T graph)
+    //        : base(sql)
+    //    {
+    //        if (graph == null)
+    //        {
+    //            throw new ArgumentNullException("graph");
+    //        }
+    //        this.Graph = graph;
+    //    }
+    //    public Func<SQLQuery, T, bool> preQueryProcess
+    //    {
+    //        get
+    //        {
+    //            return 
+    //        }
+    //    }
+    //}
+
+
+    //public class SQLQueryWithParameters : SQLQuery
+    //{
+    //    public SQLQueryWithParameters(string sql)
+    //        : this(sql, null)
+    //    { }
+
+    //    public SQLQueryWithParameters(string sql,Func<DbDataReader, bool> processRow)
+    //        : base(sql)
+    //    {
+    //        if (processRow == null)
+    //        {
+    //            this.ProcessRow = new Func<DbDataReader, bool>(dr => { return true; });
+    //        }
+    //        this.ProcessRow = processRow;
+    //    }
+    //    public readonly Func<DbDataReader, bool> ProcessRow;
+    //}
+    //public class NonQueryWithParameters : SQLQuery
+    //{
+    //    public NonQueryWithParameters(string sql)
+    //        : base(sql)
+    //    {
+    //    }
+    //    public Action<int, NonQueryWithParameters> SetPrimaryKey { get; set; }
+    //    public int Order { get; set; }
+    //    public object Tag { get; set; }
+    //    public string IdentitySql { get; set; }
+
+    //}
 }
