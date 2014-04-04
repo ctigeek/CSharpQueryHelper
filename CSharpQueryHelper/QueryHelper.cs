@@ -108,7 +108,7 @@ namespace CSharpQueryHelper
                         foreach (var query in taskList.Keys)
                         {
                             query.RowCount = taskList[query].Result;
-                            abort = abort || query.Postprocess(query);
+                            abort = abort || !query.Postprocess(query);
                         }
                         if (abort)
                         {
@@ -206,24 +206,43 @@ namespace CSharpQueryHelper
 
         public async Task ReadDataFromDBAsync(IEnumerable<SQLQuery> queries)
         {
-            query.RowCount = 0;
             using (var conn = CreateConnection())
             {
                 await conn.OpenAsync();
-                
-                var command = CreateCommand(query, conn);
-                DumpSqlAndParamsToLog(query);
-                using (var reader = await command.ExecuteReaderAsync())
+                bool abort = false;
+                foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
                 {
-                    while (await reader.ReadAsync())
+                    var taskList = new Dictionary<SQLQuery, Task<DbDataReader>>();
+                    foreach (var query in queries.Where(q => q.GroupNumber == groupNum).OrderBy(q => q.OrderNumber))
                     {
-                        query.RowCount++;
-                        if (!query.ProcessRow(reader))
-                        {
-                            break;
-                        }
+                        query.PreQueryProcess(query);
+                        var command = CreateCommand(query, conn);
+                        DumpSqlAndParamsToLog(query);
+                        var task = command.ExecuteReaderAsync();
+                        taskList.Add(query, task);
                     }
-                    reader.Close();
+                    await Task.WhenAll(taskList.Values);
+                    foreach (var query in taskList.Keys)
+                    {
+                        query.RowCount = 0;
+                        using (var reader = taskList[query].Result)
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                query.RowCount++;
+                                if (!query.ProcessRow(reader))
+                                {
+                                    break;
+                                }
+                            }
+                            reader.Close();
+                        }
+                        abort = abort || !query.Postprocess(query);
+                    }
+                    if (abort)
+                    {
+                        break;
+                    }
                 }
                 conn.Close();
             }
@@ -231,37 +250,9 @@ namespace CSharpQueryHelper
 
         public void ReadDataFromDB(IEnumerable<SQLQuery> queries)
         {
-            query.RowCount = 0;
-            using (var conn = CreateConnection())
-            {
-                conn.Open();
-                var command = CreateCommand(query, conn);
-                DumpSqlAndParamsToLog(query);
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        query.RowCount++;
-                        if (!query.ProcessRow(reader))
-                        {
-                            break;
-                        }
-                    }
-                    reader.Close();
-                }
-                conn.Close();
-            }
+            ReadDataFromDBAsync(SetQueryGroupsForSyncOperation(queries))
+                .Wait();
         }
-
-        //private void ProcessIdentityColumn(NonQueryWithParameters query, DbConnection conn, DbTransaction transaction = null)
-        //{
-        //    if (query.SetPrimaryKey != null)
-        //    {
-        //        var identity = GetIdentity(conn, transaction);
-        //        query.SetPrimaryKey(identity, query);
-        //    }
-        //}
-
         private void AddParameters(DbCommand command, SQLQuery query)
         {
             foreach (string paramName in query.InParameters.Keys)
@@ -423,55 +414,4 @@ namespace CSharpQueryHelper
             }
         }
     }
-    //public class SQLQuery<T> : SQLQuery
-    //{
-    //    public readonly T Graph;
-    //    public SQLQuery(string sql, T graph)
-    //        : base(sql)
-    //    {
-    //        if (graph == null)
-    //        {
-    //            throw new ArgumentNullException("graph");
-    //        }
-    //        this.Graph = graph;
-    //    }
-    //    public Func<SQLQuery, T, bool> preQueryProcess
-    //    {
-    //        get
-    //        {
-    //            return 
-    //        }
-    //    }
-    //}
-
-
-    //public class SQLQueryWithParameters : SQLQuery
-    //{
-    //    public SQLQueryWithParameters(string sql)
-    //        : this(sql, null)
-    //    { }
-
-    //    public SQLQueryWithParameters(string sql,Func<DbDataReader, bool> processRow)
-    //        : base(sql)
-    //    {
-    //        if (processRow == null)
-    //        {
-    //            this.ProcessRow = new Func<DbDataReader, bool>(dr => { return true; });
-    //        }
-    //        this.ProcessRow = processRow;
-    //    }
-    //    public readonly Func<DbDataReader, bool> ProcessRow;
-    //}
-    //public class NonQueryWithParameters : SQLQuery
-    //{
-    //    public NonQueryWithParameters(string sql)
-    //        : base(sql)
-    //    {
-    //    }
-    //    public Action<int, NonQueryWithParameters> SetPrimaryKey { get; set; }
-    //    public int Order { get; set; }
-    //    public object Tag { get; set; }
-    //    public string IdentitySql { get; set; }
-
-    //}
 }
