@@ -13,30 +13,72 @@ namespace CSharpQueryHelper
 
             try
             {
-                var sql = "insert into table2 (somestring, someval) values (@somestring, @someval);";
-                var query1 = new SQLQuery(sql);
-                query1.Parameters.Add("somestring", "blahbla1");
-                query1.Parameters.Add("someval", 123);
 
-                var query2 = new SQLQuery(sql);
-                query2.Parameters.Add("somestring", "blahbla2");
-                query2.Parameters.Add("someval", 321);
+                var parent = new ParentObject();
+                parent.Name = "Mom";
+                parent.SomeProp = 123;
+                parent.ChildObjects = new List<ChildObject>();
+
+                for (int i = 1; i < 20; i++)
+                {
+                    var child = new ChildObject();
+                    child.Name = "BioUnit number " + i.ToString();
+                    child.SomeProp = i;
+                    parent.ChildObjects.Add(child);
+                }
+
+                var queryList = new List<SQLQuery>();
+
+                var parentQuery = parent.GetInsertQuery();
+                parentQuery.GroupNumber = 1;
+                parentQuery.OrderNumber = 1;
+                int parentKey = 0;
+                parentQuery.PostQueryProcess = q =>
+                {
+                    parentKey = parentQuery.ReturnValue;
+                    return true;
+                };
+                queryList.Add(parentQuery);
+                int orderNumber =1;
+                foreach (var child in parent.ChildObjects)
+                {
+                    var childQuery = child.GetInsertQuery(q =>
+                    {
+                        q.Parameters.Add("parentpk", parentKey);
+                    });
+                    childQuery.GroupNumber = 2;
+                    childQuery.OrderNumber = orderNumber;
+                    orderNumber++;
+                    queryList.Add(childQuery);
+                }
+                
+                var qh = new QueryHelper("sandbox");
+                qh.RunQuery(queryList, true);
+
+
 
                 
+                //var sql = "select someString from table1 where pk=9;";
+
+                //var scalerQuery = new SQLQueryScaler<string>(sql);
+                
+                
+                
+                
+                
+                //var query = new SQLQuery(sql, SQLQueryType.DataReader);
+
                 //query.ProcessRow = new Func<System.Data.Common.DbDataReader, bool>(dr =>
                 //{
-                //    Console.WriteLine(dr[1]);
+                //    Console.WriteLine("pk={0}  someString={1}  someFK={2}", dr[0], dr[1], dr[2]);
                 //    return true;
                 //});
+                
 
-                var qh = new QueryHelper("sandbox");
+                //var someString = qh.RunScalerQuery<string>(sql);
+                //Console.WriteLine(someString);
 
-                qh.NonQueryToDBWithTransaction(new[] { query1, query2 });
-
-                //    .ReadScalerDataFromDB<int>("select top 1 pk from table1;");
-
-                //Console.WriteLine(val);
-
+                //qh.RunQuery(query);
             }
             catch (Exception ex)
             {
@@ -57,7 +99,6 @@ namespace CSharpQueryHelper
     public class ChildObject
     {
         public string Name { get; set; }
-        public DateTime Created { get; set; }
         public int SomeProp { get; set; }
     }
 
@@ -65,18 +106,17 @@ namespace CSharpQueryHelper
     {
         public static SQLQuery GetInsertQuery(this ChildObject childObject, Action<SQLQuery> preQuery)
         {
-            string sql = "insert into childTable (ParentPK, Name, Created, SomeProp) values (@parentpk,@name,@created,@someprop);";
-            var query = new SQLQuery(sql);
+            string sql = "insert into Child (parent_pk, Name, SomeProp) values (@parentpk,@name,@someprop);";
+            var query = new SQLQuery(sql, SQLQueryType.NonQuery);
             query.Parameters.Add("name", childObject.Name);
-            query.Parameters.Add("created", childObject.Created);
             query.Parameters.Add("someprop", childObject.SomeProp);
             query.PreQueryProcess = preQuery;
             return query;
         }
-        public static SQLQuery GetInsertQuery(this ParentObject parentObject)
+        public static SQLQueryScaler<int> GetInsertQuery(this ParentObject parentObject)
         {
-            string sql = "insert into parentTable (Name, SomeProp) OUTPUT Inserted.pk values (@name, @someprop);";
-            var query = new SQLQuery(sql);
+            string sql = "insert into Parent (Name, SomeProp) OUTPUT Inserted.pk values (@name, @someprop);";
+            var query = new SQLQueryScaler<int>(sql);
             query.Parameters.Add("name", parentObject.Name);
             query.Parameters.Add("someprop", parentObject.SomeProp);
 

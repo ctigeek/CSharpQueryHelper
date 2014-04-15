@@ -15,12 +15,13 @@ namespace CSharpQueryHelper
         
         void RunQuery(SQLQuery query);
         void RunQuery(IEnumerable<SQLQuery> queries, bool withTransaction = false);
+        Task RunQueryAsync(SQLQuery query);
         Task RunQueryAsync(IEnumerable<SQLQuery> queries, bool withTransaction = false);
 
-        T ReadScalerDataFromDB<T>(string sql);
-        Task<T> ReadScalerDataFromDBAsync<T>(string sql);
-        T ReadScalerDataFromDB<T>(SQLQuery query);
-        Task<T> ReadScalerDataFromDBAsync<T>(SQLQuery query);
+        T RunScalerQuery<T>(string sql);
+        Task<T> RunScalerQueryAsync<T>(string sql);
+        T RunScalerQuery<T>(SQLQueryScaler<T> query);
+        Task<T> RunScalerQueryAsync<T>(SQLQueryScaler<T> query);
     }
 
     public class QueryHelper : IQueryHelper
@@ -63,7 +64,7 @@ namespace CSharpQueryHelper
         }
         public void RunQuery(IEnumerable<SQLQuery> queries, bool withTransaction = false)
         {
-            RunQueryAsync(queries, withTransaction)
+            RunQueryAsync(SetQueryGroupsForSyncOperation(queries), withTransaction)
                 .Wait();
         }
 
@@ -92,7 +93,7 @@ namespace CSharpQueryHelper
                             taskList.Add(queryTask);
                         }
                         await Task.WhenAll(taskList.Select(qt => qt.Task));
-                        foreach (var queryTask in taskList) 
+                        foreach (var queryTask in taskList)
                         {
                             if (queryTask.Query.SQLQueryType == SQLQueryType.DataReader)
                             {
@@ -102,10 +103,7 @@ namespace CSharpQueryHelper
                             {
                                 ProcessQuery(queryTask);
                             }
-                            if (queryTask.Query.PostQueryProcess != null)
-                            {
-                                queryTask.Query.CausedAbort = !queryTask.Query.PostQueryProcess(queryTask.Query);
-                            }
+                            queryTask.Query.CausedAbort = !queryTask.Query.PostQueryProcess(queryTask.Query);
                         }
                         if (taskList.Exists(qt => qt.Query.CausedAbort == true))
                         {
@@ -174,10 +172,7 @@ namespace CSharpQueryHelper
 
         private QueryTask ExecuteQuery(SQLQuery query, DbConnection connection, DbTransaction transaction)
         {
-            if (query.PreQueryProcess != null)
-            {
-                query.PreQueryProcess(query);
-            }
+            query.PreQueryProcess(query);
             var command = CreateCommand(query, connection, transaction);
             DumpSqlAndParamsToLog(query);
             if (query.SQLQueryType == SQLQueryType.NonQuery)
@@ -200,197 +195,36 @@ namespace CSharpQueryHelper
             }
         }
 
-
-
-
-
-
-
-
-
-        //public void NonQueryToDBWithTransaction(IEnumerable<SQLQuery> queries)
-        //{
-        //    NonQueryToDbAsync(SetQueryGroupsForSyncOperation(queries), true)
-        //        .Wait();
-        //}
-
-        //public async Task NonQueryToDBWithTransactionAsync(IEnumerable<SQLQuery> queries)
-        //{
-        //    await NonQueryToDbAsync(queries, true);
-        //}
-
-        //public void NonQueryToDB(IEnumerable<SQLQuery> queries)
-        //{
-        //    NonQueryToDbAsync(SetQueryGroupsForSyncOperation(queries), false)
-        //        .Wait();
-        //}
-
-        //public async Task NonQueryToDBAsync(IEnumerable<SQLQuery> queries)
-        //{
-        //    await NonQueryToDbAsync(queries, false);
-        //}
-
-        //private async Task NonQueryToDbAsync(IEnumerable<SQLQuery> queries, bool withTransaction) {
-        //    DbTransaction transaction = null;
-        //    try
-        //    {
-        //        using (var conn = CreateConnection())
-        //        {
-        //            await conn.OpenAsync();
-        //            bool abort = false;
-        //            if (withTransaction)
-        //            {
-        //                transaction = conn.BeginTransaction();
-        //            }
-        //            foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
-        //            {
-        //                var taskList = new Dictionary<SQLQuery, Task<int>>();
-        //                foreach (var query in queries.Where(q => q.GroupNumber == groupNum).OrderBy(q => q.OrderNumber))
-        //                {
-        //                    query.PreQueryProcess(query);
-        //                    var command = CreateCommand(query, conn, transaction);
-        //                    DumpSqlAndParamsToLog(query);
-        //                    var task = command.ExecuteNonQueryAsync();
-        //                    taskList.Add(query, task);
-        //                }
-        //                await Task.WhenAll(taskList.Values);
-        //                foreach (var query in taskList.Keys)
-        //                {
-        //                    query.RowCount = taskList[query].Result;
-        //                    abort = abort || !query.PostQueryProcess(query);
-        //                }
-        //                if (abort)
-        //                {
-        //                    break;
-        //                }
-        //            }
-        //            if (transaction != null)
-        //            {
-        //                transaction.Commit();
-        //                transaction = null;
-        //            }
-        //            conn.Close();
-        //        }
-        //    }
-        //    catch (Exception)
-        //    {
-        //        try
-        //        {
-        //            if (transaction != null)
-        //            {
-        //                transaction.Rollback();
-        //            }
-        //        }
-        //        catch { }
-        //        throw;
-        //    }
-        //}
-
-        
-
-        public T ReadScalerDataFromDB<T>(string sql)
+        public T RunScalerQuery<T>(string sql)
         {
-            return ReadScalerDataFromDB<T>(new SQLQueryScaler<T>(sql));
+            return RunScalerQuery<T>(new SQLQueryScaler<T>(sql));
         }
 
-        public T ReadScalerDataFromDB<T>(SQLQueryScaler<T> query)
+        public T RunScalerQuery<T>(SQLQueryScaler<T> query)
         {
-            var task = ReadScalerDataFromDBAsync<T>(query);
+            var task = RunScalerQueryAsync<T>(query);
             task.Wait();
             return task.Result;
         }
 
-        public async Task<T> ReadScalerDataFromDBAsync<T>(string sql)
+        public async Task<T> RunScalerQueryAsync<T>(string sql)
         {
             var query = new SQLQueryScaler<T>(sql);
             await RunQueryAsync(query);
             return query.ReturnValue;
         }
         
-        public async Task<T> ReadScalerDataFromDBAsync<T>(SQLQueryScaler<T> query)
+        public async Task<T> RunScalerQueryAsync<T>(SQLQueryScaler<T> query)
         {
             await RunQueryAsync(query);
             return query.ReturnValue;
         }
 
-            //var conn = CreateConnection();
-            //T returnResult = default(T);
-            //using (conn)
-            //{
-            //    await conn.OpenAsync();
-            //    var command = CreateCommand(query, conn);
-            //    query.PreQueryProcess(query); 
-            //    DumpSqlAndParamsToLog(query);
-            //    var result = await command.ExecuteScalarAsync();
-            //    query.RowCount = 1;
-            //    query.PostQueryProcess(query);
-            //    returnResult = ProcessScalerResult<T>(result);
-            //    conn.Close();
-            //}
-            //return returnResult;
-        
-        
-
-        //public async Task ReadDataFromDBAsync(IEnumerable<SQLQuery> queries)
-        //{
-        //    using (var conn = CreateConnection())
-        //    {
-        //        await conn.OpenAsync();
-        //        bool abort = false;
-        //        foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
-        //        {
-        //            var taskList = new Dictionary<SQLQuery, Task<DbDataReader>>();
-        //            foreach (var query in queries.Where(q => q.GroupNumber == groupNum).OrderBy(q => q.OrderNumber))
-        //            {
-        //                query.PreQueryProcess(query);
-        //                var command = CreateCommand(query, conn);
-        //                DumpSqlAndParamsToLog(query);
-        //                var task = command.ExecuteReaderAsync();
-        //                taskList.Add(query, task);
-        //            }
-        //            await Task.WhenAll(taskList.Values);
-        //            foreach (var query in taskList.Keys)
-        //            {
-        //                query.RowCount = 0;
-        //                using (var reader = taskList[query].Result)
-        //                {
-        //                    while (await reader.ReadAsync())
-        //                    {
-        //                        query.RowCount++;
-        //                        if (!query.ProcessRow(reader))
-        //                        {
-        //                            break;
-        //                        }
-        //                    }
-        //                    reader.Close();
-        //                }
-        //                abort = abort || !query.PostQueryProcess(query);
-        //            }
-        //            if (abort)
-        //            {
-        //                break;
-        //            }
-        //        }
-        //        conn.Close();
-        //    }
-        //}
-
-        //public void ReadDataFromDB(IEnumerable<SQLQuery> queries)
-        //{
-        //    ReadDataFromDBAsync(SetQueryGroupsForSyncOperation(queries))
-        //        .Wait();
-        //}
-
-        //public void ReadDataFromDB(SQLQuery query)
-        //{
-        //    ReadDataFromDB(new SQLQuery[] { query });
-        //}
-
         private List<SQLQuery> SetQueryGroupsForSyncOperation(IEnumerable<SQLQuery> queries)
         {
             int groupNum = 1;
             var queryList = queries.ToList();
-            foreach (var query in queryList)
+            foreach (var query in queryList.OrderBy(q=>q.GroupNumber).ThenBy(q=>q.OrderNumber))
             {
                 query.GroupNumber = groupNum;
                 query.OrderNumber = 1;
@@ -542,10 +376,10 @@ namespace CSharpQueryHelper
     }
 
     public class SQLQuery {
-        public SQLQuery(string sql) {
+        public SQLQuery(string sql, SQLQueryType queryType) {
             this.OriginalSQL = sql;
             this.ModifiedSQL = OriginalSQL;
-            SQLQueryType = CSharpQueryHelper.SQLQueryType.DataReader;
+            SQLQueryType = queryType;
             Parameters = new Dictionary<string, object>();
             InParameters = new Dictionary<string, List<object>>();
             GroupNumber = 0;
@@ -557,7 +391,7 @@ namespace CSharpQueryHelper
         public readonly Dictionary<string, List<object>> InParameters;
         public readonly string OriginalSQL;
         public string ModifiedSQL { get; set; }
-        public SQLQueryType SQLQueryType { get; set; }
+        public readonly SQLQueryType SQLQueryType;
         public int RowCount { get; set; }
         public int GroupNumber { get; set; }
         public int OrderNumber { get; set; }
@@ -620,34 +454,11 @@ namespace CSharpQueryHelper
     public class SQLQueryScaler<T> : SQLQuery, ScalerQuery
     {
         public SQLQueryScaler(string sql)
-            : base(sql)
+            : base(sql, SQLQueryType.Scaler)
         {
-            SQLQueryType = CSharpQueryHelper.SQLQueryType.Scaler;
-            this.PostQueryProcess = new Func<SQLQuery, bool>(q =>
-            {
-                processScaler(this);
-                return true;
-            });
         }
 
         public T ReturnValue { get; set; }
-
-        private Action<SQLQueryScaler<T>> processScaler;
-        public Action<SQLQueryScaler<T>> ProcessScaler
-        {
-            get
-            {
-                if (processScaler == null)
-                {
-                    processScaler = new Action<SQLQueryScaler<T>>(q => { });
-                }
-                return processScaler;
-            }
-            set
-            {
-                processScaler = value;
-            }
-        }
 
         public void ProcessScalerResult(object result)
         {
