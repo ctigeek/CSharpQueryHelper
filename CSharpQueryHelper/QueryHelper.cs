@@ -17,7 +17,7 @@ namespace CSharpQueryHelper
         void RunQuery(IEnumerable<SQLQuery> queries, bool withTransaction = false);
         Task RunQueryAsync(SQLQuery query);
         Task RunQueryAsync(IEnumerable<SQLQuery> queries, bool withTransaction = false);
-
+        void RunNonQuery(string sql);
         T RunScalerQuery<T>(string sql);
         Task<T> RunScalerQueryAsync<T>(string sql);
         T RunScalerQuery<T>(SQLQueryScaler<T> query);
@@ -58,6 +58,10 @@ namespace CSharpQueryHelper
             DebugLoggingEnabled = false;
         }
 
+        public void RunNonQuery(string sql)
+        {
+            RunQuery(new [] { new SQLQuery(sql, SQLQueryType.NonQuery) });
+        }
         public void RunQuery(SQLQuery query)
         {
             RunQuery(new [] { query });

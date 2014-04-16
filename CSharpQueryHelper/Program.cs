@@ -31,8 +31,6 @@ namespace CSharpQueryHelper
 
                 var parents = Extensions.LoadParents();
 
-
-
             }
             catch (Exception ex)
             {
