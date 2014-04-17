@@ -137,7 +137,8 @@ namespace CSharpQueryHelper
 
         public override object this[string name]
         {
-            get {
+            get
+            {
                 if (dataRow.ContainsKey(name))
                 {
                     return dataRow[name];
