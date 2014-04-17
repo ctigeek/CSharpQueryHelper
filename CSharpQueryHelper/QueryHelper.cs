@@ -24,7 +24,15 @@ namespace CSharpQueryHelper
         Task<T> RunScalerQueryAsync<T>(SQLQueryScaler<T> query);
     }
 
-    public class QueryHelper : IQueryHelper
+    public interface ITransactable
+    {
+        bool TransactionOpen { get; }
+        void StartTransaction();
+        void CommitTransaction();
+        void RollbackTransaction();
+    }
+
+    public class QueryHelper : IQueryHelper, ITransactable, IDisposable
     {
         public readonly string ConnectionString;
         public readonly string DataProvider;
@@ -39,6 +47,7 @@ namespace CSharpQueryHelper
             this.DataProvider = dataProvider;
             this.DbFactory = dbFactory;
             DebugLoggingEnabled = false;
+            externalTransactionInProgress = false;
         }
 
         public QueryHelper(string connectionString, string dataProvider) :
@@ -56,8 +65,61 @@ namespace CSharpQueryHelper
             this.DataProvider = ConfigurationManager.ConnectionStrings[connectionName].ProviderName;
             this.DbFactory = DbProviderFactories.GetFactory(DataProvider);
             DebugLoggingEnabled = false;
+            externalTransactionInProgress = false;
         }
 
+        public void Dispose()
+        {
+            if (externalTransactionInProgress)
+            {
+                RollbackTransaction();
+            }
+        }
+
+        #region external transactions
+        private DbConnection persistentConnection;
+        private DbTransaction persistentTransaction;
+
+        private bool externalTransactionInProgress;
+        public bool TransactionOpen
+        {
+            get
+            {
+                return externalTransactionInProgress;
+            }
+        }
+        public async void StartTransaction()
+        {
+            if (externalTransactionInProgress)
+            {
+                throw new InvalidOperationException("There is already a transaction in progress.");
+            }
+
+            externalTransactionInProgress = true;
+            var conn = await GetOpenConnection();
+            var tran = GetTransaction(conn);
+        }
+        public void CommitTransaction()
+        {
+            if (!externalTransactionInProgress)
+            {
+                throw new InvalidOperationException("There is not a transaction in progress.");
+            }
+            externalTransactionInProgress = false;
+            CommitDbTransaction(persistentTransaction);
+            CloseConnection(persistentConnection);
+        }
+        public void RollbackTransaction()
+        {
+            if (!externalTransactionInProgress)
+            {
+                throw new InvalidOperationException("There is not a transaction in progress.");
+            }
+            externalTransactionInProgress = false;
+            RollbackDbTransaction(persistentTransaction);
+            CloseConnection(persistentConnection);
+        }
+        #endregion
         public void RunNonQuery(string sql)
         {
             RunQuery(new [] { new SQLQuery(sql, SQLQueryType.NonQuery) });
@@ -79,60 +141,117 @@ namespace CSharpQueryHelper
         public async Task RunQueryAsync(IEnumerable<SQLQuery> queries, bool withTransaction = false)
         {
             DbTransaction transaction = null;
+            DbConnection connection = null;
             try
             {
-                using (var conn = CreateConnection())
+                connection = await GetOpenConnection();
+                if (withTransaction || externalTransactionInProgress)
                 {
-                    await conn.OpenAsync();
-                    if (withTransaction)
-                    {
-                        transaction = conn.BeginTransaction();
-                    }
-                    foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
-                    {
-                        var taskList = new List<QueryTask>();
-                        foreach (var query in queries.Where(q => q.GroupNumber == groupNum).OrderBy(q => q.OrderNumber))
-                        {
-                            var queryTask = ExecuteQuery(query, conn, transaction);
-                            taskList.Add(queryTask);
-                        }
-                        await Task.WhenAll(taskList.Select(qt => qt.Task));
-                        foreach (var queryTask in taskList)
-                        {
-                            if (queryTask.Query.SQLQueryType == SQLQueryType.DataReader)
-                            {
-                                await ProcessReadQueryAsync(queryTask);
-                            }
-                            else
-                            {
-                                ProcessQuery(queryTask);
-                            }
-                            queryTask.Query.CausedAbort = !queryTask.Query.PostQueryProcess(queryTask.Query);
-                        }
-                        if (taskList.Exists(qt => qt.Query.CausedAbort == true))
-                        {
-                            break;
-                        }
-                    }
-                    if (transaction != null)
-                    {
-                        transaction.Commit();
-                        transaction = null;
-                    }
-                    conn.Close();
+                    transaction = GetTransaction(connection);
                 }
+                foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
+                {
+                    var taskList = new List<QueryTask>();
+                    foreach (var query in queries.Where(q => q.GroupNumber == groupNum).OrderBy(q => q.OrderNumber))
+                    {
+                        var queryTask = ExecuteQuery(query, connection, transaction);
+                        taskList.Add(queryTask);
+                    }
+                    await Task.WhenAll(taskList.Select(qt => qt.Task));
+                    foreach (var queryTask in taskList)
+                    {
+                        if (queryTask.Query.SQLQueryType == SQLQueryType.DataReader)
+                        {
+                            await ProcessReadQueryAsync(queryTask);
+                        }
+                        else
+                        {
+                            ProcessQuery(queryTask);
+                        }
+                        queryTask.Query.CausedAbort = !queryTask.Query.PostQueryProcess(queryTask.Query);
+                    }
+                    if (taskList.Exists(qt => qt.Query.CausedAbort == true))
+                    {
+                        break;
+                    }
+                }
+                CommitDbTransaction(transaction);
             }
             catch (Exception)
             {
                 try
                 {
-                    if (transaction != null)
-                    {
-                        transaction.Rollback();
-                    }
+                    RollbackDbTransaction(transaction);
                 }
                 catch { }
                 throw;
+            }
+            finally
+            {
+                CloseConnection(connection);
+            }
+        }
+
+        private void RollbackDbTransaction(DbTransaction transaction)
+        {
+            if (!externalTransactionInProgress && transaction != null)
+            {
+                persistentTransaction = null;
+                transaction.Rollback();
+            }
+        }
+
+        private void CommitDbTransaction(DbTransaction transaction)
+        {
+            if (!externalTransactionInProgress && transaction != null)
+            {
+                persistentTransaction = null;
+                transaction.Commit();
+            }
+        }
+
+        private DbTransaction GetTransaction(DbConnection connection)
+        {
+            if (externalTransactionInProgress && persistentTransaction != null)
+            {
+                return persistentTransaction;
+            }
+            else
+            {
+                var transaction = connection.BeginTransaction();
+                if (externalTransactionInProgress)
+                {
+                    persistentTransaction = transaction;
+                }
+                return transaction;
+            }
+        }
+
+        private void CloseConnection(DbConnection connection)
+        {
+            if (!externalTransactionInProgress)
+            {
+                persistentConnection = null;
+                connection.Close();
+                connection.Dispose();
+            }
+        }
+
+        private async Task<DbConnection> GetOpenConnection()
+        {
+            if (externalTransactionInProgress && persistentConnection != null)
+            {
+                return await Task.FromResult<DbConnection>(persistentConnection);
+            }
+            else
+            {
+                var conn = CreateConnection();
+                await conn.OpenAsync();
+                if (externalTransactionInProgress)
+                {
+                    persistentConnection = conn;
+                }
+                return conn;
             }
         }
 
@@ -166,9 +285,9 @@ namespace CSharpQueryHelper
             {
                 queryTask.Query.RowCount = 1;
                 var result = queryTask.ScalerTask.Result;
-                if (queryTask.Query is ScalerQuery)
+                if (queryTask.Query is IScalerQuery)
                 {
-                    ScalerQuery scalerQuery = (ScalerQuery)queryTask.Query;
+                    IScalerQuery scalerQuery = (IScalerQuery)queryTask.Query;
                     scalerQuery.ProcessScalerResult(result);
                 }
             }
@@ -450,12 +569,12 @@ namespace CSharpQueryHelper
         }
     }
 
-    public interface ScalerQuery
+    public interface IScalerQuery
     {
         void ProcessScalerResult(object result);
     }
 
-    public class SQLQueryScaler<T> : SQLQuery, ScalerQuery
+    public class SQLQueryScaler<T> : SQLQuery, IScalerQuery
     {
         public SQLQueryScaler(string sql)
             : base(sql, SQLQueryType.Scaler)
