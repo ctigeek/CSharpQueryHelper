@@ -26,7 +26,7 @@ namespace CSharpQueryHelper
 
     public interface ITransactable
     {
-        bool InProgress { get; }
+        bool TransactionOpen { get; }
         void StartTransaction();
         void CommitTransaction();
         void RollbackTransaction();
@@ -81,7 +81,7 @@ namespace CSharpQueryHelper
         private DbTransaction persistentTransaction;
 
         private bool externalTransactionInProgress;
-        public bool InProgress
+        public bool TransactionOpen
         {
             get
             {
@@ -97,7 +97,7 @@ namespace CSharpQueryHelper
 
             externalTransactionInProgress = true;
             var conn = await GetOpenConnection();
-            var tran = BeginDbTransaction(conn);
+            var tran = GetTransaction(conn);
         }
         public void CommitTransaction()
         {
@@ -144,14 +144,10 @@ namespace CSharpQueryHelper
             DbConnection connection = null;
             try
             {
-                if (externalTransactionInProgress && !withTransaction)
-                {
-                    throw new ArgumentException("If an external transaction is in progress, all calls to RunQuery must have withTransaction set to `true`.");
-                }
                 connection = await GetOpenConnection();
-                if (withTransaction)
+                if (withTransaction || externalTransactionInProgress)
                 {
-                    transaction = BeginDbTransaction(connection);
+                    transaction = GetTransaction(connection);
                 }
                 foreach (var groupNum in queries.Select(q => q.GroupNumber).Distinct().OrderBy(gn => gn))
                 {
@@ -198,7 +194,7 @@ namespace CSharpQueryHelper
 
         private void RollbackDbTransaction(DbTransaction transaction)
         {
-            if (!externalTransactionInProgress)
+            if (!externalTransactionInProgress && transaction != null)
             {
                 persistentTransaction = null;
                 transaction.Rollback();
@@ -207,14 +203,14 @@ namespace CSharpQueryHelper
 
         private void CommitDbTransaction(DbTransaction transaction)
         {
-            if (!externalTransactionInProgress)
+            if (!externalTransactionInProgress && transaction != null)
             {
                 persistentTransaction = null;
                 transaction.Commit();
             }
         }
 
-        private DbTransaction BeginDbTransaction(DbConnection connection)
+        private DbTransaction GetTransaction(DbConnection connection)
         {
             if (externalTransactionInProgress && persistentTransaction != null)
             {
@@ -237,6 +233,7 @@ namespace CSharpQueryHelper
             {
                 persistentConnection = null;
                 connection.Close();
+                connection.Dispose();
             }
         }
 
@@ -288,9 +285,9 @@ namespace CSharpQueryHelper
             {
                 queryTask.Query.RowCount = 1;
                 var result = queryTask.ScalerTask.Result;
-                if (queryTask.Query is ScalerQuery)
+                if (queryTask.Query is IScalerQuery)
                 {
-                    ScalerQuery scalerQuery = (ScalerQuery)queryTask.Query;
+                    IScalerQuery scalerQuery = (IScalerQuery)queryTask.Query;
                     scalerQuery.ProcessScalerResult(result);
                 }
             }
@@ -572,12 +569,12 @@ namespace CSharpQueryHelper
         }
     }
 
-    public interface ScalerQuery
+    public interface IScalerQuery
     {
         void ProcessScalerResult(object result);
     }
 
-    public class SQLQueryScaler<T> : SQLQuery, ScalerQuery
+    public class SQLQueryScaler<T> : SQLQuery, IScalerQuery
     {
         public SQLQueryScaler(string sql)
             : base(sql, SQLQueryType.Scaler)
