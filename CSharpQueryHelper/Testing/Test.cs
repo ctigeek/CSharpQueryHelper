@@ -476,367 +476,252 @@ namespace CSharpQueryHelper
             Assert.AreEqual(345, query.RowCount);
         }
 
-//        [Test]
-//        public void NonQueryTestWithParametersBuiltDynamicallyNoIdentity()
-//        {
-//            var query = new NonQueryWithParameters(sqlString);
-//            query.BuildParameters = new Action<SQLQuery>(q =>
-//            {
-//                q.Parameters.Add("param1", "value1");
-//                q.Parameters.Add("param2", "value2");
-//                q.Parameters.Add("param3", 333);
-//            });
-            
-//            queryHelper.NonQueryToDB(query);
-//            VerifyLogging(sqlString);
-//            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQuery(), Times.Exactly(1));
-//            Assert.AreEqual(543, query.RowCount);
-//        }
+        [Test]
+        public void NonQueryTestWithParametersBuiltDynamicallyNoIdentity()
+        {
+            var query = new SQLQuery(sqlString, SQLQueryType.NonQuery);
+            query.PreQueryProcess = new Action<SQLQuery>(q =>
+            {
+                q.Parameters.Add("param1", "value1");
+                q.Parameters.Add("param2", "value2");
+                q.Parameters.Add("param3", 333);
+            });
 
-//        [Test]
-//        public void NonQueryTestWithParametersBuiltDynamicallyNoIdentityAsync()
-//        {
-//            var query = new NonQueryWithParameters(sqlString);
-//            query.BuildParameters = new Action<SQLQuery>(q =>
-//            {
-//                q.Parameters.Add("param1", "value1");
-//                q.Parameters.Add("param2", "value2");
-//                q.Parameters.Add("param3", 333);
-//            });
+            queryHelper.RunQuery(query);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
+            Assert.AreEqual(345, query.RowCount);
+        }
 
-//            var task = queryHelper.NonQueryToDBAsync(query);
-//            task.Wait();
+        [Test]
+        public void NonQueryTestWithParametersBuiltDynamicallyNoIdentityAsync()
+        {
+            var query = new SQLQuery(sqlString, SQLQueryType.NonQuery);
+            query.PreQueryProcess = new Action<SQLQuery>(q =>
+            {
+                q.Parameters.Add("param1", "value1");
+                q.Parameters.Add("param2", "value2");
+                q.Parameters.Add("param3", 333);
+            });
 
-//            VerifyLogging(sqlString);
-//            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
-//            Assert.AreEqual(345, query.RowCount);
-//        }
+            var task = queryHelper.RunQueryAsync(query);
+            task.Wait();
 
-//        [Test]
-//        public void NonQueryTestNoParametersWithIdentity()
-//        {
-//            decimal valueToReturn = 567;
-//            MockDatabaseFactory.SetScalerReturnValue(valueToReturn);
+            VerifyLogging(sqlString);
+            Assert.AreEqual(sqlString, MockDatabaseFactory.DbCommand.Object.CommandText);
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(3));
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
+            Assert.AreEqual(345, query.RowCount);
+        }
 
-//            int returnedPK = -1;
-//            var query = new NonQueryWithParameters(sqlString);
-//            query.SetPrimaryKey = new Action<int, NonQueryWithParameters>((pk, q) =>
-//            {
-//                returnedPK = pk;
-//            });
+        [Test]
+        public void NonQueryTransactionNoParametersNoIdentity()
+        {
+            int returnValue = 100;
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                .Returns(() =>
+                {
+                    returnValue++;
+                    return Task.FromResult<int>(returnValue);
+                });
 
-//            queryHelper.NonQueryToDB(query);
-//            Assert.AreEqual((int)valueToReturn, returnedPK);
-//            //VerifyLogging(sqlString);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteScalar(), Times.Exactly(1));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//            Assert.AreEqual(543, query.RowCount);
-//        }
+            var queries = new Dictionary<int, SQLQuery>();
+            for (int counter = 0; counter < 10; counter++)
+            {
+                queries.Add(counter, new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter });
+            }
+            queryHelper.RunQuery(queries.Values, true);
 
-//        [Test]
-//        public void NonQueryTestNoParametersWithIdentityAsync()
-//        {
-//            decimal valueToReturn = 567;
-//            MockDatabaseFactory.SetScalerReturnValue(valueToReturn);
+            for (int counter = 0; counter < 10; counter++)
+            {
+                Assert.AreEqual(101 + counter, queries[counter].RowCount);
+            }
+            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+        }
 
-//            int returnedPK = -1;
-//            var query = new NonQueryWithParameters(sqlString);
-//            query.SetPrimaryKey = new Action<int, NonQueryWithParameters>((pk, q) =>
-//            {
-//                returnedPK = pk;
-//            });
+        [Test]
+        public void NonQueryTransactionNoParametersNoIdentityAsync()
+        {
+            int returnValue = 100;
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                        .Returns(() =>   //you can't use returnasync here becuse there's no way to increment the variable each time, not even with .callback.
+                        {
+                            returnValue++;
+                            return Task.FromResult<int>(returnValue);
+                        });
 
-//            var task = queryHelper.NonQueryToDBAsync(query);
-//            task.Wait();
+            var queries = new Dictionary<int, SQLQuery>();
+            for (int counter = 0; counter < 10; counter++)
+            {
+                queries.Add(counter, new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter });
+            }
+            var task = queryHelper.RunQueryAsync(queries.Values, true);
+            task.Wait();
 
-//            Assert.AreEqual((int)valueToReturn, returnedPK);
-//            //VerifyLogging(sqlString);
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(1));
-//            Assert.AreEqual(345, query.RowCount);
-//        }
+            for (int counter = 0; counter < 10; counter++)
+            {
+                Assert.AreEqual(101 + counter, queries[counter].RowCount);
+            }
+            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+        }
 
-//        [Test]
-//        public void NonQueryTransactionNoParametersNoIdentity()
-//        {
-//            int returnValue = 100;
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQuery())
-//                .Returns(() => 
-//                { 
-//                    returnValue++; 
-//                    return returnValue; 
-//                });
+        [Test]
+        public void NonQueryTransactionWithParametersNoIdentity()
+        {
+            int returnValue = 100;
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                        .Returns(() =>   //you can't use returnasync here becuse there's no way to increment the variable each time, not even with .callback.
+                        {
+                            returnValue++;
+                            return Task.FromResult<int>(returnValue);
+                        });
 
-//            var queries = new List<NonQueryWithParameters>();
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                queries.Add(new NonQueryWithParameters("insert into sometable values (" + counter + ");") { Order=counter });
-//            }
-//            queryHelper.NonQueryToDBWithTransaction(queries);
+            var queries = new Dictionary<int, SQLQuery>();
+            for (int counter = 0; counter < 10; counter++)
+            {
+                var query = new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter };
+                query.Parameters.Add("param1", "value1");
+                query.Parameters.Add("param2", "value2");
+                query.Parameters.Add("param3", 333);
+                queries.Add(counter, query);
+            }
+            queryHelper.RunQuery(queries.Values, true);
 
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                Assert.AreEqual(101 + counter, queries.FirstOrDefault(q => q.Order == counter).RowCount);
-//            }
-//            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQuery(), Times.Exactly(10));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
-//        }
+            for (int counter = 0; counter < 10; counter++)
+            {
+                Assert.AreEqual(101 + counter, queries[counter].RowCount);
+            }
+            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(30));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+        }
 
-//        [Test]
-//        public void NonQueryTransactionNoParametersNoIdentityAsync()
-//        {
-//            int returnValue = 100;
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
-//                        .Returns(() =>   //you can't use retunrasync here becuse there's no way to increment the variable each time, not even with .callback.
-//                        { 
-//                            returnValue++; 
-//                            return Task.FromResult<int>(returnValue); 
-//                        });
+        [Test]
+        public void NonQueryTransactionWithParametersNoIdentityAsync()
+        {
+            int returnValue = 100;
+            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                       .Returns(() =>
+                    {
+                        returnValue++;
+                        return Task.FromResult<int>(returnValue);
+                    });
 
-//            var queries = new List<NonQueryWithParameters>();
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                queries.Add(new NonQueryWithParameters("insert into sometable values (" + counter + ");") { Order = counter });
-//            }
-//            var task = queryHelper.NonQueryToDBWithTransactionAsync(queries);
-//            task.Wait();
+            var queries = new Dictionary<int, SQLQuery>();
+            for (int counter = 0; counter < 10; counter++)
+            {
+                var query = new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter };
+                query.Parameters.Add("param1", "value1");
+                query.Parameters.Add("param2", "value2");
+                query.Parameters.Add("param3", 333);
+                queries.Add(counter, query);
+            }
+            var task = queryHelper.RunQueryAsync(queries.Values, true);
+            task.Wait();
 
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                Assert.AreEqual(101 + counter, queries.FirstOrDefault(q => q.Order == counter).RowCount);
-//            }
-//            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
-//        }
+            for (int counter = 0; counter < 10; counter++)
+            {
+                Assert.AreEqual(101 + counter, queries[counter].RowCount);
+            }
+            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
+            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(30));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+        }
 
-//        [Test]
-//        public void NonQueryTransactionWithParametersNoIdentity()
-//        {
-//            int returnValue = 100;
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQuery())
-//                    .Returns(() => 
-//                    { 
-//                        returnValue++; 
-//                        return returnValue; 
-//                    });
+        [Test, ExpectedException("System.ApplicationException", UserMessage = "blah blah")]
+        public void NonQueryTransactionNoParametersNoIdentityRollbackWhenException()
+        {
+            try
+            {
+                int returnValue = 100;
+                MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                      .Returns(() =>
+                    {
+                        returnValue++;
+                        if (returnValue == 105) throw new ApplicationException("blah blah");
+                        return Task.FromResult<int>(returnValue);
+                    });
 
-//            var queries = new List<NonQueryWithParameters>();
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                var query = new NonQueryWithParameters("insert into sometable values (" + counter + ");") { Order = counter };
-//                query.Parameters.Add("param1", "value1");
-//                query.Parameters.Add("param2", "value2");
-//                query.Parameters.Add("param3", 333);
-//                queries.Add(query);
-//            }
-//            queryHelper.NonQueryToDBWithTransaction(queries);
+                var queries = new Dictionary<int, SQLQuery>();
+                for (int counter = 0; counter < 10; counter++)
+                {
+                    var query = new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter };
+                    queries.Add(counter, query);
+                }
+                queryHelper.RunQuery(queries.Values, true);
+            }
+            catch (System.AggregateException ex)
+            {
+                throw ex.InnerExceptions[0];
+            }
+            finally
+            {
+                MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+                MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(5));
+                MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+                MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
+                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(1));
+            }
+        }
 
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                Assert.AreEqual(101 + counter, queries.FirstOrDefault(q => q.Order == counter).RowCount);
-//            }
-//            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQuery(), Times.Exactly(10));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(30));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
-//        }
+        [Test, ExpectedException("System.ApplicationException", UserMessage = "blah blah")]
+        public void NonQueryTransactionNoParametersNoIdentityRollbackWhenExceptionAsync()
+        {
+            try
+            {
+                int returnValue = 100;
+                MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
+                       .Returns(() =>
+                       {
+                           returnValue++;
+                           if (returnValue == 105) throw new ApplicationException("blah blah");
+                           return Task.FromResult<int>(returnValue);
+                       });
 
-//        [Test]
-//        public void NonQueryTransactionWithParametersNoIdentityAsync()
-//        {
-//            int returnValue = 100;
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
-//                       .Returns(() => 
-//                    {
-//                        returnValue++;
-//                        return Task.FromResult<int>(returnValue); 
-//                    });
-
-//            var queries = new List<NonQueryWithParameters>();
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                var query = new NonQueryWithParameters("insert into sometable values (" + counter + ");") { Order = counter };
-//                query.Parameters.Add("param1", "value1");
-//                query.Parameters.Add("param2", "value2");
-//                query.Parameters.Add("param3", 333);
-//                queries.Add(query);
-//            }
-//            var task = queryHelper.NonQueryToDBWithTransactionAsync(queries);
-//            task.Wait();
-
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                Assert.AreEqual(101 + counter, queries.FirstOrDefault(q => q.Order == counter).RowCount);
-//            }
-//            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(30));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
-//        }
-
-//        [Test]
-//        public void NonQueryTransactionNoParametersWithIdentity()
-//        {
-//            int returnValue = 100;
-//            decimal identityValue = 200;
-//            Dictionary<int, int> primarykeysSet = new Dictionary<int, int>();
-            
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQuery()).Returns(() => { returnValue++; return returnValue; });
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalar()).Returns(() => { identityValue += 1; return identityValue; }); //this returns the identity value...
-
-//            var queries = new List<NonQueryWithParameters>();
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                var query = new NonQueryWithParameters("insert into sometable values (" + counter + ");") { Order = counter };
-//                query.SetPrimaryKey = (pk, q) => { primarykeysSet.Add(q.Order, pk); };
-//                queries.Add(query);
-//            }
-//            queryHelper.NonQueryToDBWithTransaction(queries);
-
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                var query = queries.FirstOrDefault(q => q.Order == counter);
-//                Assert.AreEqual(101 + counter, query.RowCount);
-//                Assert.AreEqual(201 + counter, primarykeysSet[query.Order]);
-//            }
-//            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQuery(), Times.Exactly(10));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
-//        }
-
-//        [Test]
-//        public void NonQueryTransactionNoParametersWithIdentityAsync()
-//        {
-//            int returnValue = 100;
-//            int identityValue = 200;
-//            Dictionary<int, int> primarykeysSet = new Dictionary<int, int>();
-
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
-//                .Returns(() => { returnValue++; return Task.FromResult<int>(returnValue); });
-
-//            MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteScalarAsync(It.IsAny<System.Threading.CancellationToken>()))
-//                   .Returns(() => { identityValue++; return Task.FromResult<object>(identityValue); });
-
-//            var queries = new List<NonQueryWithParameters>();
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                var query = new NonQueryWithParameters("insert into sometable values (" + counter + ");") { Order = counter };
-//                query.SetPrimaryKey = (pk, q) => { primarykeysSet.Add(q.Order, pk); };
-//                queries.Add(query);
-//            }
-
-//            var task = queryHelper.NonQueryToDBWithTransactionAsync(queries);
-//            task.Wait();
-
-//            for (int counter = 0; counter < 10; counter++)
-//            {
-//                var query = queries.FirstOrDefault(q => q.Order == counter);
-//                Assert.AreEqual(101 + counter, query.RowCount);
-//                Assert.AreEqual(201 + counter, primarykeysSet[query.Order]);
-//            }
-//            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//            MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
-//            MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//            MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
-//            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
-//        }
-
-//        [Test,ExpectedException("System.ApplicationException", UserMessage="blah blah")]
-//        public void NonQueryTransactionNoParametersNoIdentityRollbackWhenException()
-//        {
-//            try
-//            {
-//                int returnValue = 100;
-//                MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQuery())
-//                    .Returns(() =>
-//                    {
-//                        returnValue++;
-//                        if (returnValue == 105) throw new ApplicationException("blah blah");
-//                        return returnValue;
-//                    });
-
-//                var queries = new List<NonQueryWithParameters>();
-//                for (int counter = 0; counter < 10; counter++)
-//                {
-//                    var query = new NonQueryWithParameters("insert into sometable values (" + counter + ");");
-//                    query.Order = counter;
-//                    queries.Add(query);
-//                }
-//                queryHelper.NonQueryToDBWithTransaction(queries);
-//            }
-//            finally
-//            {
-//                MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//                MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQuery(), Times.Exactly(5));
-//                MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//                MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
-//                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(1));
-//            }
-//        }
-
-//        [Test, ExpectedException("System.ApplicationException", UserMessage = "blah blah")]
-//        public void NonQueryTransactionNoParametersNoIdentityRollbackWhenExceptionAsync()
-//        {
-//            try
-//            {
-//                int returnValue = 100;
-//                MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
-//                       .Returns(() =>
-//                       {
-//                           returnValue++;
-//                           if (returnValue == 105) throw new ApplicationException("blah blah");
-//                           return Task.FromResult<int>(returnValue);
-//                       });
-
-//                var queries = new List<NonQueryWithParameters>();
-//                for (int counter = 0; counter < 10; counter++)
-//                {
-//                    var query = new NonQueryWithParameters("insert into sometable values (" + counter + ");");
-//                    query.Order = counter;
-//                    queries.Add(query);
-//                }
-//                var task = queryHelper.NonQueryToDBWithTransactionAsync(queries);
-//                task.Wait();
-//            }
-//            catch (System.AggregateException ex)
-//            {
-//                throw ex.InnerExceptions[0];
-//            }
-//            finally
-//            {
-//                MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
-//                MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(5));
-//                MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
-//                MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
-//                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
-//                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(1));
-//            }
-//        }
+                var queries = new Dictionary<int, SQLQuery>();
+                for (int counter = 0; counter < 10; counter++)
+                {
+                    var query = new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter };
+                    queries.Add(counter, query);
+                }
+                var task = queryHelper.RunQueryAsync(queries.Values, true);
+                task.Wait();
+            }
+            catch (System.AggregateException ex)
+            {
+                throw ex.InnerExceptions[0];
+            }
+            finally
+            {
+                MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+                MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(5));
+                MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+                MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
+                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
+                MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(1));
+            }
+        }
 
         private void VerifyLogging(string sql)
         {
