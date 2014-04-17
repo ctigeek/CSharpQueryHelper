@@ -122,11 +122,11 @@ namespace CSharpQueryHelper
         #endregion
         public void RunNonQuery(string sql)
         {
-            RunQuery(new [] { new SQLQuery(sql, SQLQueryType.NonQuery) });
+            RunQuery(new [] { new SQLQuery(sql, SQLQueryType.NonQuery) }, externalTransactionInProgress);
         }
         public void RunQuery(SQLQuery query)
         {
-            RunQuery(new [] { query });
+            RunQuery(new [] { query }, externalTransactionInProgress);
         }
         public void RunQuery(IEnumerable<SQLQuery> queries, bool withTransaction = false)
         {
@@ -136,7 +136,7 @@ namespace CSharpQueryHelper
 
         public async Task RunQueryAsync(SQLQuery query)
         {
-            await RunQueryAsync(new[] { query });
+            await RunQueryAsync(new[] { query }, externalTransactionInProgress);
         }
         public async Task RunQueryAsync(IEnumerable<SQLQuery> queries, bool withTransaction = false)
         {
@@ -144,6 +144,10 @@ namespace CSharpQueryHelper
             DbConnection connection = null;
             try
             {
+                if (externalTransactionInProgress && !withTransaction)
+                {
+                    throw new ArgumentException("If an external transaction is open, then withTransaction parameter must be set to `true`.");
+                }
                 connection = await GetOpenConnection();
                 if (withTransaction || externalTransactionInProgress)
                 {
