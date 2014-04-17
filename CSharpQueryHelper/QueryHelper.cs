@@ -144,6 +144,10 @@ namespace CSharpQueryHelper
             DbConnection connection = null;
             try
             {
+                if (externalTransactionInProgress && !withTransaction)
+                {
+                    throw new ArgumentException("If an external transaction is in progress, all calls to RunQuery must have withTransaction set to `true`.");
+                }
                 connection = await GetOpenConnection();
                 if (withTransaction)
                 {
