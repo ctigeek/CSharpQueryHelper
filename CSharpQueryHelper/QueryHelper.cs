@@ -503,7 +503,7 @@ namespace CSharpQueryHelper
     }
 
     public class SQLQuery {
-        public SQLQuery(string sql, SQLQueryType queryType) {
+        public SQLQuery(string sql, SQLQueryType queryType = SQLQueryType.DataReader) {
             this.OriginalSQL = sql;
             this.ModifiedSQL = OriginalSQL;
             SQLQueryType = queryType;
