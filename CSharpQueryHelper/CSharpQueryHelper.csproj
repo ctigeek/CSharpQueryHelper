@@ -53,6 +53,7 @@
     <Compile Include="Example\Entities\Order.cs" />
     <Compile Include="Example\Entities\OrderItem.cs" />
     <Compile Include="Example\StoreRepository.cs" />
+    <Compile Include="Example\StoreRepositoryTests.cs" />
     <Compile Include="Testing\MockDatabase.cs">
       <SubType>Component</SubType>
     </Compile>
