@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace CSharpQueryHelper
 {
-    public interface IQueryHelper
+    public interface IQueryHelper : ITransactable
     {
         Action<string, System.Diagnostics.TraceEventType> LogMessage { get; set; }
         bool DebugLoggingEnabled { get; set; }
@@ -32,7 +32,7 @@ namespace CSharpQueryHelper
         void RollbackTransaction();
     }
 
-    public class QueryHelper : IQueryHelper, ITransactable, IDisposable
+    public class QueryHelper : IQueryHelper, IDisposable
     {
         public readonly string ConnectionString;
         public readonly string DataProvider;
