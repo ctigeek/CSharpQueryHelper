@@ -524,6 +524,7 @@ namespace CSharpQueryHelper
         public int OrderNumber { get; set; }
         public bool Executed { get; set; }
         public bool CausedAbort { get; set; }
+        public object Tag { get; set; }
         private Action<SQLQuery> preQueryProcess;
         public virtual Action<SQLQuery> PreQueryProcess
         {

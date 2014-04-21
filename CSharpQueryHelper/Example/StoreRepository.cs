@@ -48,7 +48,7 @@ namespace CSharpQueryHelper.Example
         }
         public Order AddNewOrderAndItems(Order order)
         {
-            int orderCounter = 0;
+            int orderCounter = 1;
             var queries = new List<SQLQuery>();
             var query = GetOrderQuery(order);
             query.OrderNumber = orderCounter;
@@ -59,7 +59,7 @@ namespace CSharpQueryHelper.Example
                 orderCounter++;
                 var oiQuery = GetOrderItemQuery(oi);
                 oiQuery.OrderNumber = orderCounter;
-                query.GroupNumber = 2;
+                oiQuery.GroupNumber = 2;
                 queries.Add(oiQuery);
             }
             queryHelper.RunQueryAsync(queries)
@@ -73,10 +73,20 @@ namespace CSharpQueryHelper.Example
             SQLQuery query = (orderItem.PK > 0) ?
                 new SQLQuery(SQLUpdateOrderItem, SQLQueryType.NonQuery) :
                 new SQLQueryScaler<int>(SQLInsertOrderItem);
-            query.Parameters.Add("Order_PK", orderItem.Order.PK);
             query.Parameters.Add("Quantity", orderItem.Quantity);
             query.Parameters.Add("Inventory_PK", orderItem.InventoryID);
             query.Parameters.Add("PricePer", orderItem.Price);
+            if (orderItem.Order.PK <= 0)
+            {
+                query.PreQueryProcess = q =>
+                    {
+                        query.Parameters.Add("Order_PK", orderItem.Order.PK);
+                    };
+            }
+            else
+            {
+                query.Parameters.Add("Order_PK", orderItem.Order.PK);
+            }
             if (orderItem.PK > 0)
             {
                 query.Parameters.Add("PK", orderItem.PK);
@@ -89,6 +99,7 @@ namespace CSharpQueryHelper.Example
                         return true;
                     };
             }
+            query.Tag = orderItem;
             return query;
         }
 
@@ -112,6 +123,7 @@ namespace CSharpQueryHelper.Example
                     return true;
                 };
             }
+            query.Tag = order;
             return query;
         }
         private Order CreateOrderFromDataReader(DbDataReader reader)

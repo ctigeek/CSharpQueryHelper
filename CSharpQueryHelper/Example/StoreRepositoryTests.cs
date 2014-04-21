@@ -14,10 +14,23 @@ namespace CSharpQueryHelper.Example
     {
         StoreRepository repo;
         Mock<IQueryHelper> queryHelper;
+        Customer customer;
+        Order order;
+        OrderItem orderItem1;
+        OrderItem orderItem2;
 
         [SetUp]
         public void Setup()
         {
+            customer = new Customer() { PK = 123 };
+            orderItem1 = new OrderItem() { PK = 0, InventoryID = 123, Price = 232, Quantity = 999 };
+            orderItem2 = new OrderItem() { PK = 0, InventoryID = 124, Price = 233, Quantity = 988 };
+            order = new Order() { PK = 0, Customer = customer, OrderDatetime = DateTime.Now, Status = OrderStatus.Ordered };
+            order.OrderItems.Add(orderItem1);
+            orderItem1.Order = order;
+            orderItem2.Order = order;
+            order.OrderItems.Add(orderItem2);
+
             queryHelper = new Mock<IQueryHelper>();
             queryHelper.Setup(qh => qh.RunScalerQuery<int>(It.IsAny<SQLQueryScaler<int>>()))
                 .Returns(123);
@@ -30,6 +43,8 @@ namespace CSharpQueryHelper.Example
         {
             var val = repo.GetNumberOfOrdersWithStatus(OrderStatus.Ordered);
             Assert.AreEqual(123, val);
+            queryHelper.Verify(qh =>
+                qh.RunScalerQuery<int>(It.Is<SQLQueryScaler<int>>(q => q.ModifiedSQL == StoreRepository.SQLCountOrderOfStatus)));
             queryHelper.Verify(qh => 
                     qh.RunScalerQuery<int>(It.Is<SQLQueryScaler<int>>(s => 
                         s.Parameters.Count == 1 && 
@@ -40,30 +55,115 @@ namespace CSharpQueryHelper.Example
         [Test]
         public void GetOrderCountForAllStatusTest()
         {
+            bool allTrue = true;
             queryHelper.Setup(qh => qh.RunQuery(It.IsAny<SQLQuery>()))
                 .Callback<SQLQuery>(q =>
                 {
-                    q.ProcessRow(GetStatusCountDataReader(OrderStatus.BackOrdered, 111));
-                    q.ProcessRow(GetStatusCountDataReader(OrderStatus.Destroyed, 222));
-                    q.ProcessRow(GetStatusCountDataReader(OrderStatus.Forgotten, 333));
-                    q.ProcessRow(GetStatusCountDataReader(OrderStatus.Lost, 444));
-                    q.ProcessRow(GetStatusCountDataReader(OrderStatus.Ordered, 555));
+                    allTrue = allTrue && q.ProcessRow(GetStatusCountDataReader(OrderStatus.BackOrdered, 111));
+                    allTrue = allTrue && q.ProcessRow(GetStatusCountDataReader(OrderStatus.Destroyed, 222));
+                    allTrue = allTrue && q.ProcessRow(GetStatusCountDataReader(OrderStatus.Forgotten, 333));
+                    allTrue = allTrue && q.ProcessRow(GetStatusCountDataReader(OrderStatus.Lost, 444));
+                    allTrue = allTrue && q.ProcessRow(GetStatusCountDataReader(OrderStatus.Ordered, 555));
                 });
-            var orderCountDict = repo.GetOrderCountForAllStatus(new DateTime(2000, 1, 1), new DateTime(2000, 3, 31));
+            var startDate = new DateTime(2000, 1, 1);
+            var endDate = new DateTime(2000, 3, 3);
+            var orderCountDict = repo.GetOrderCountForAllStatus(startDate, endDate);
             Assert.AreEqual(111, orderCountDict[OrderStatus.BackOrdered]);
             Assert.AreEqual(222, orderCountDict[OrderStatus.Destroyed]);
             Assert.AreEqual(333, orderCountDict[OrderStatus.Forgotten]);
             Assert.AreEqual(444, orderCountDict[OrderStatus.Lost]);
             Assert.AreEqual(555, orderCountDict[OrderStatus.Ordered]);
-
+            Assert.IsTrue(allTrue);
+            queryHelper.Verify(qh =>
+                qh.RunQuery(It.Is<SQLQuery>(q => q.ModifiedSQL == StoreRepository.SQLCountOrderAllStatusByDate)));
+            queryHelper.Verify(qh =>
+                qh.RunQuery(It.Is<SQLQuery>(q => q.Parameters.Count == 2 &&
+                                            (DateTime)q.Parameters["StartDate"] == startDate &&
+                                            (DateTime)q.Parameters["EndDate"] == endDate)),
+                            Times.Exactly(1));
         }
 
+        [Test]
+        public void AddNewOrderAndItemsTest()
+        {
+            List<SQLQuery> queriesParameter = null;
+            queryHelper.Setup(qh => qh.RunQueryAsync(It.IsAny<List<SQLQuery>>(), false))
+                .Returns(Task.FromResult<object>(null))
+                .Callback<List<SQLQuery>, bool>((queries, useTrans) =>
+                {
+                    queriesParameter = queries;
+                    foreach (var q in queries)
+                    {
+                        SQLQueryScaler<int> sqs = (SQLQueryScaler<int>)q;
+                        sqs.PreQueryProcess(sqs);
+                        if (sqs.OrderNumber == 1)
+                        {
+                            sqs.ReturnValue = 12321;
+                        }
+                        else {
+                            sqs.ReturnValue = (sqs.OrderNumber == 2) ? 33 : 34;
+                        }
+                        q.PostQueryProcess(sqs);
+                    }
+                });
+
+            var savedOrder = repo.AddNewOrderAndItems(order);
+            queryHelper.Verify(qh => qh.RunQueryAsync(It.IsAny<List<SQLQuery>>(), false), Times.Exactly(1));
+            Assert.AreEqual(12321, savedOrder.PK);
+            Assert.AreEqual(33, savedOrder.OrderItems[0].PK);
+            Assert.AreEqual(34, savedOrder.OrderItems[1].PK);
+            Assert.AreEqual(3, queriesParameter.Count);
+            Assert.AreEqual(1, queriesParameter.Count(q => q.GroupNumber == 1));
+            Assert.AreEqual(2, queriesParameter.Count(q => q.GroupNumber == 2));
+            AssertParametersAreSameAsObject(queriesParameter, false);
+            Assert.AreEqual(StoreRepository.SQLInsertOrder, queriesParameter.FirstOrDefault(q => q.GroupNumber == 1).ModifiedSQL);
+            Assert.AreEqual(StoreRepository.SQLInsertOrderItem, queriesParameter.FirstOrDefault(q => q.GroupNumber == 2).ModifiedSQL);
+        }
+
+        private void AssertParametersAreSameAsObject(IEnumerable< SQLQuery> queries, bool testPK)
+        {
+            foreach (var query in queries)
+            {
+                if (query.Tag != null)
+                {
+                    if (query.Tag is Order)
+                    {
+                        AssertParametersAreSameAsOrder((Order)query.Tag, query.Parameters, testPK);
+                    }
+                    else if (query.Tag is OrderItem)
+                    {
+                        AssertParametersAreSameAsOrderItem((OrderItem)query.Tag, query.Parameters, testPK);
+                    }
+                }
+            }
+        }
+        private void AssertParametersAreSameAsOrderItem(OrderItem orderItem, Dictionary<string, object> parameters, bool testPK)
+        {
+            Assert.AreEqual(orderItem.InventoryID, (int)parameters["Inventory_PK"]);
+            Assert.AreEqual(orderItem.Order.PK, (int)parameters["Order_PK"]);
+            Assert.AreEqual(orderItem.Price, (long)parameters["PricePer"]);
+            Assert.AreEqual(orderItem.Quantity, (int)parameters["Quantity"]);
+            if (testPK)
+            {
+                Assert.AreEqual(orderItem.PK, (int)parameters["PK"]);
+            }
+        }
+        private void AssertParametersAreSameAsOrder(Order order, Dictionary<string, object> parameters, bool testPK)
+        {
+            Assert.AreEqual(order.Customer.PK, (int)parameters["CustomerPK"]);
+            Assert.AreEqual(order.OrderDatetime, (DateTime)parameters["Datetime"]);
+            Assert.AreEqual((int)order.Status, (int)parameters["Status"]);
+            if (testPK)
+            {
+                Assert.AreEqual(order.PK, (int)parameters["PK"]);
+            }
+        }
 
         private TestDataReader GetStatusCountDataReader(OrderStatus status, int count)
         {
             var returnValues = new Dictionary<string, object>();
-            returnValues.Add("Status", (int)OrderStatus.BackOrdered);
-            returnValues.Add("count", (int)123);
+            returnValues.Add("Status", (int)status);
+            returnValues.Add("count", count);
             return new TestDataReader(returnValues);
         }
     }
