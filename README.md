@@ -13,5 +13,6 @@ And the QueryHelper manages the connection, command, reader, and transaction.
 
 It's fully mockable so unit testing is a breeze (especially compared with mocking a DbCommand!)
 
-Samples:
+Sample code including unit tests:
 https://github.com/ctigeek/CSharpQueryHelper/tree/master/CSharpQueryHelper/Example
+

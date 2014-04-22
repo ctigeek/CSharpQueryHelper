@@ -87,15 +87,18 @@ namespace CSharpQueryHelper.Example
         public void AddNewOrderAndItemsTest()
         {
             List<SQLQuery> queriesParameter = null;
+            //since the QueryHelper object is mocked, we have to do all the call-backs ourselves....
             queryHelper.Setup(qh => qh.RunQueryAsync(It.IsAny<List<SQLQuery>>(), false))
                 .Returns(Task.FromResult<object>(null))
                 .Callback<List<SQLQuery>, bool>((queries, useTrans) =>
                 {
-                    queriesParameter = queries;
+                    queriesParameter = queries; //save the queries to assert them afterwards....
                     foreach (var q in queries)
                     {
                         SQLQueryScaler<int> sqs = (SQLQueryScaler<int>)q;
+                        //1. call the pre-query Func.
                         sqs.PreQueryProcess(sqs);
+                        //2. set the scaler return value.
                         if (sqs.OrderNumber == 1)
                         {
                             sqs.ReturnValue = 12321;
@@ -103,6 +106,7 @@ namespace CSharpQueryHelper.Example
                         else {
                             sqs.ReturnValue = (sqs.OrderNumber == 2) ? 33 : 34;
                         }
+                        //3. call the post-query Action.
                         q.PostQueryProcess(sqs);
                     }
                 });
