@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading.Tasks;
 using Moq;
 using Moq.Protected;
+using System.Transactions;
+using NUnit.Framework;
 
 namespace CSharpQueryHelper
 {
@@ -51,7 +53,6 @@ namespace CSharpQueryHelper
         {
             var dbConnection = new Mock<MoqDbConnection>();
             dbConnection.CallBase = true;
-            dbConnection.Setup(dbc=> dbc.EnlistTransaction(It.IsAny<System.Transactions.Transaction>()));
             dbConnection.SetupProperty(dbc => dbc.ConnectionString);
             dbConnection.Setup(dbc => dbc.Open());
             dbConnection.Setup(dbc => dbc.Close());
@@ -108,11 +109,48 @@ namespace CSharpQueryHelper
         }
     }
 
-    public abstract class MoqDbConnection : DbConnection
+    public abstract class MoqDbConnection : DbConnection, IEnlistmentNotification
     {
-        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
+        protected override DbTransaction BeginDbTransaction(System.Data.IsolationLevel isolationLevel)
         {
             return MockDatabaseFactory.DbTransaction.Object;
+        }
+
+        private Transaction transaction;
+        public override void EnlistTransaction(Transaction transaction)
+        {
+            RollbackCallCount = 0;
+            CommitCallCount = 0;
+            InDoubtCallCount = 0;
+            PrepareCallCount = 0;
+
+            this.transaction = transaction;
+            this.transaction.EnlistVolatile(this, EnlistmentOptions.None);
+        }
+
+        public int CommitCallCount { get; private set; }
+        public void Commit(Enlistment enlistment)
+        {
+            CommitCallCount++;
+            enlistment.Done();
+        }
+        public int InDoubtCallCount { get; private set; }
+        public void InDoubt(Enlistment enlistment)
+        {
+            InDoubtCallCount++;
+            enlistment.Done();
+        }
+        public int PrepareCallCount { get; private set; }
+        public void Prepare(PreparingEnlistment preparingEnlistment)
+        {
+            PrepareCallCount++;
+            preparingEnlistment.Prepared();
+        }
+        public int RollbackCallCount { get; private set; }
+        public void Rollback(Enlistment enlistment)
+        {
+            RollbackCallCount++;
+            enlistment.Done();
         }
     }
 
@@ -154,4 +192,41 @@ namespace CSharpQueryHelper
         }
     }
 
+    public class TestDataContainer
+    {
+        public Dictionary<string, object> dataRow;
+
+        public TestDataContainer()
+        {
+            dataRow = new Dictionary<string, object>();
+            dataRow.Add("column1", 1);
+            dataRow.Add("column2", "3");
+            dataRow.Add("column3", DateTime.Parse("1/1/2000"));
+        }
+
+        public int column1 = 0;
+        public string column2 = string.Empty;
+        public DateTime column3 = DateTime.MinValue;
+
+        public void AssertData()
+        {
+            Assert.AreEqual(1, column1);
+            Assert.AreEqual("3", column2);
+            Assert.AreEqual(DateTime.Parse("1/1/2000"), column3);
+        }
+
+        public Func<DbDataReader, bool> ProcessRow
+        {
+            get
+            {
+                return dr =>
+                {
+                    column1 = (int)dr["column1"];
+                    column2 = (string)dr["column2"];
+                    column3 = (DateTime)dr["column3"];
+                    return true;
+                };
+            }
+        }
+    }
 }

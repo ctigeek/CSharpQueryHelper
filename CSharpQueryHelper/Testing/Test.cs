@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Moq;
 using Moq.Protected;
 using NUnit.Framework;
+using System.Transactions;
 
 namespace CSharpQueryHelper
 {
@@ -726,8 +727,7 @@ namespace CSharpQueryHelper
         [Test]
         public void NonQueryExternalTransactionAsync()
         {
-            //var transaction = new Mock<System.Transactions.Transaction>();
-            var transaction = new System.Transactions.CommittableTransaction();
+            var transaction = new CommittableTransaction();
             queryHelper.EnlistTransaction(transaction);
 
             int returnValue = 100;
@@ -743,13 +743,12 @@ namespace CSharpQueryHelper
             {
                 queries.Add(counter, new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter });
             }
-            queryHelper.RunQuery(queries.Values, true);
+            queryHelper.RunQuery(queries.Values);
 
             for (int counter = 0; counter < 10; counter++)
             {
                 Assert.AreEqual(101 + counter, queries[counter].RowCount);
             }
-            //MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(0));
@@ -758,8 +757,8 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsTrue(queryHelper.TransactionOpen);
 
-            transaction.Raise(t => t.TransactionCompleted += null, new System.Transactions.TransactionEventArgs());
-
+            transaction.Commit();
+            Assert.AreEqual(1, MockDatabaseFactory.DbConnection.Object.CommitCallCount);
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
@@ -769,8 +768,8 @@ namespace CSharpQueryHelper
         [Test]
         public void NonQueryExternalTransactionRollbackAsync()
         {
-            var transaction = new Mock<System.Transactions.Transaction>();
-            queryHelper.EnlistTransaction(transaction.Object);
+            var transaction = new CommittableTransaction();
+            queryHelper.EnlistTransaction(transaction);
 
             int returnValue = 100;
             MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
@@ -785,32 +784,34 @@ namespace CSharpQueryHelper
             {
                 queries.Add(counter, new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter });
             }
-            queryHelper.RunQuery(queries.Values, true);
+            queryHelper.RunQuery(queries.Values);
 
             for (int counter = 0; counter < 10; counter++)
             {
                 Assert.AreEqual(101 + counter, queries[counter].RowCount);
             }
-            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(0));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsTrue(queryHelper.TransactionOpen);
 
-            transaction.Raise(t => t.TransactionCompleted += null, new System.Transactions.TransactionEventArgs());
+            transaction.Rollback();
 
+            Assert.AreEqual(1, MockDatabaseFactory.DbConnection.Object.RollbackCallCount);
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
-            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(1));
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
             Assert.IsFalse(queryHelper.TransactionOpen);
         }
 
         [Test]
         public void NonQueryExternalTransactionMultipleRunsAsync()
         {
-            var transaction = new Mock<System.Transactions.Transaction>();
-            queryHelper.EnlistTransaction(transaction.Object);
+            var transaction = new CommittableTransaction();
+            queryHelper.EnlistTransaction(transaction);
 
             int returnValue = 100;
             MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
@@ -825,13 +826,12 @@ namespace CSharpQueryHelper
             {
                 queries.Add(counter, new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter });
             }
-            queryHelper.RunQuery(queries.Values, true);
+            queryHelper.RunQuery(queries.Values);
 
             for (int counter = 0; counter < 10; counter++)
             {
                 Assert.AreEqual(101 + counter, queries[counter].RowCount);
             }
-            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
@@ -839,21 +839,18 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsTrue(queryHelper.TransactionOpen);
 
-
-
-
+            
             queries = new Dictionary<int, SQLQuery>();
             for (int counter = 0; counter < 10; counter++)
             {
                 queries.Add(counter, new SQLQuery("insert into sometable values (" + counter + ");", SQLQueryType.NonQuery) { GroupNumber = counter });
             }
-            queryHelper.RunQuery(queries.Values, true);
+            queryHelper.RunQuery(queries.Values);
 
             for (int counter = 0; counter < 10; counter++)
             {
                 Assert.AreEqual(111 + counter, queries[counter].RowCount);
             }
-            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(20));
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
@@ -861,10 +858,11 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsTrue(queryHelper.TransactionOpen);
 
-
-            //queryHelper.CommitTransaction();
-            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
+            transaction.Commit();
+            Assert.AreEqual(1, MockDatabaseFactory.DbConnection.Object.CommitCallCount);
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
             Assert.IsFalse(queryHelper.TransactionOpen);
         }
 
@@ -875,41 +873,5 @@ namespace CSharpQueryHelper
         }
     }
 
-    public class TestDataContainer
-    {
-        public Dictionary<string, object> dataRow;
-
-        public TestDataContainer()
-        {
-            dataRow = new Dictionary<string, object>();
-            dataRow.Add("column1", 1);
-            dataRow.Add("column2", "3");
-            dataRow.Add("column3", DateTime.Parse("1/1/2000"));
-        }
-
-        public int column1 = 0;
-        public string column2 = string.Empty;
-        public DateTime column3 = DateTime.MinValue;
-
-        public void AssertData()
-        {
-            Assert.AreEqual(1, column1);
-            Assert.AreEqual("3", column2);
-            Assert.AreEqual(DateTime.Parse("1/1/2000"), column3);
-        }
-
-        public Func<DbDataReader, bool> ProcessRow
-        {
-            get
-            {
-                return dr =>
-                {
-                    column1 = (int)dr["column1"];
-                    column2 = (string)dr["column2"];
-                    column3 = (DateTime)dr["column3"];
-                    return true;
-                };
-            }
-        }
-    }
+    
 }
