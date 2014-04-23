@@ -5,6 +5,7 @@ using System.Data.Common;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Transactions;
 
 namespace CSharpQueryHelper
 {
@@ -27,9 +28,7 @@ namespace CSharpQueryHelper
     public interface ITransactable
     {
         bool TransactionOpen { get; }
-        void StartTransaction();
-        void CommitTransaction();
-        void RollbackTransaction();
+        void EnlistTransaction(Transaction transaction);
     }
 
     public class QueryHelper : IQueryHelper, IDisposable
@@ -47,7 +46,7 @@ namespace CSharpQueryHelper
             this.DataProvider = dataProvider;
             this.DbFactory = dbFactory;
             DebugLoggingEnabled = false;
-            externalTransactionInProgress = false;
+            TransactionOpen = false;
         }
 
         public QueryHelper(string connectionString, string dataProvider) :
@@ -65,68 +64,48 @@ namespace CSharpQueryHelper
             this.DataProvider = ConfigurationManager.ConnectionStrings[connectionName].ProviderName;
             this.DbFactory = DbProviderFactories.GetFactory(DataProvider);
             DebugLoggingEnabled = false;
-            externalTransactionInProgress = false;
+            TransactionOpen = false;
         }
 
         public void Dispose()
         {
-            if (externalTransactionInProgress)
+            if (TransactionOpen)
             {
-                RollbackTransaction();
+                CloseConnection(persistentConnection);
             }
         }
 
         #region external transactions
         private DbConnection persistentConnection;
-        private DbTransaction persistentTransaction;
-
-        private bool externalTransactionInProgress;
-        public bool TransactionOpen
+        private Transaction currentTransaction;
+        public bool TransactionOpen { get; private set;}
+        public async void EnlistTransaction(Transaction transaction)
         {
-            get
-            {
-                return externalTransactionInProgress;
-            }
-        }
-        public async void StartTransaction()
-        {
-            if (externalTransactionInProgress)
+            if (TransactionOpen)
             {
                 throw new InvalidOperationException("There is already a transaction in progress.");
             }
-
-            externalTransactionInProgress = true;
-            var conn = await GetOpenConnection();
-            var tran = GetTransaction(conn);
+            TransactionOpen = true;
+            var conn = await GetOpenConnectionAsync();
+            conn.EnlistTransaction(transaction);
+            this.currentTransaction = transaction;
+            this.currentTransaction.TransactionCompleted += currentTransaction_TransactionCompleted;
         }
-        public void CommitTransaction()
+        void currentTransaction_TransactionCompleted(object sender, TransactionEventArgs e)
         {
-            if (!externalTransactionInProgress)
-            {
-                throw new InvalidOperationException("There is not a transaction in progress.");
-            }
-            externalTransactionInProgress = false;
-            CommitDbTransaction(persistentTransaction);
+            TransactionOpen = false;
             CloseConnection(persistentConnection);
-        }
-        public void RollbackTransaction()
-        {
-            if (!externalTransactionInProgress)
-            {
-                throw new InvalidOperationException("There is not a transaction in progress.");
-            }
-            externalTransactionInProgress = false;
-            RollbackDbTransaction(persistentTransaction);
-            CloseConnection(persistentConnection);
+            persistentConnection = null;
+            currentTransaction = null;
         }
         #endregion
         public void RunNonQuery(string sql)
         {
-            RunQuery(new [] { new SQLQuery(sql, SQLQueryType.NonQuery) }, externalTransactionInProgress);
+            RunQuery(new[] { new SQLQuery(sql, SQLQueryType.NonQuery) }, TransactionOpen);
         }
         public void RunQuery(SQLQuery query)
         {
-            RunQuery(new [] { query }, externalTransactionInProgress);
+            RunQuery(new[] { query }, TransactionOpen);
         }
         public void RunQuery(IEnumerable<SQLQuery> queries, bool withTransaction = false)
         {
@@ -136,7 +115,7 @@ namespace CSharpQueryHelper
 
         public async Task RunQueryAsync(SQLQuery query)
         {
-            await RunQueryAsync(new[] { query }, externalTransactionInProgress);
+            await RunQueryAsync(new[] { query }, TransactionOpen);
         }
         public async Task RunQueryAsync(IEnumerable<SQLQuery> queries, bool withTransaction = false)
         {
@@ -144,12 +123,12 @@ namespace CSharpQueryHelper
             DbConnection connection = null;
             try
             {
-                if (externalTransactionInProgress && !withTransaction)
+                if (TransactionOpen && withTransaction)
                 {
                     throw new ArgumentException("If an external transaction is open, then withTransaction parameter must be set to `true`.");
                 }
-                connection = await GetOpenConnection();
-                if (withTransaction || externalTransactionInProgress)
+                connection = await GetOpenConnectionAsync();
+                if (withTransaction && !TransactionOpen)
                 {
                     transaction = GetTransaction(connection);
                 }
@@ -198,42 +177,29 @@ namespace CSharpQueryHelper
 
         private void RollbackDbTransaction(DbTransaction transaction)
         {
-            if (!externalTransactionInProgress && transaction != null)
+            if (!TransactionOpen && transaction != null)
             {
-                persistentTransaction = null;
                 transaction.Rollback();
             }
         }
 
         private void CommitDbTransaction(DbTransaction transaction)
         {
-            if (!externalTransactionInProgress && transaction != null)
+            if (!TransactionOpen && transaction != null)
             {
-                persistentTransaction = null;
                 transaction.Commit();
             }
         }
 
         private DbTransaction GetTransaction(DbConnection connection)
         {
-            if (externalTransactionInProgress && persistentTransaction != null)
-            {
-                return persistentTransaction;
-            }
-            else
-            {
-                var transaction = connection.BeginTransaction();
-                if (externalTransactionInProgress)
-                {
-                    persistentTransaction = transaction;
-                }
-                return transaction;
-            }
+            var transaction = connection.BeginTransaction();
+            return transaction;
         }
 
         private void CloseConnection(DbConnection connection)
         {
-            if (!externalTransactionInProgress)
+            if (!TransactionOpen)
             {
                 persistentConnection = null;
                 connection.Close();
@@ -241,9 +207,9 @@ namespace CSharpQueryHelper
             }
         }
 
-        private async Task<DbConnection> GetOpenConnection()
+        private async Task<DbConnection> GetOpenConnectionAsync()
         {
-            if (externalTransactionInProgress && persistentConnection != null)
+            if (TransactionOpen && persistentConnection != null)
             {
                 return await Task.FromResult<DbConnection>(persistentConnection);
             }
@@ -251,7 +217,7 @@ namespace CSharpQueryHelper
             {
                 var conn = CreateConnection();
                 await conn.OpenAsync();
-                if (externalTransactionInProgress)
+                if (TransactionOpen)
                 {
                     persistentConnection = conn;
                 }

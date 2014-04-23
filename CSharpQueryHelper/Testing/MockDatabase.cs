@@ -51,6 +51,7 @@ namespace CSharpQueryHelper
         {
             var dbConnection = new Mock<MoqDbConnection>();
             dbConnection.CallBase = true;
+            dbConnection.Setup(dbc=> dbc.EnlistTransaction(It.IsAny<System.Transactions.Transaction>()));
             dbConnection.SetupProperty(dbc => dbc.ConnectionString);
             dbConnection.Setup(dbc => dbc.Open());
             dbConnection.Setup(dbc => dbc.Close());

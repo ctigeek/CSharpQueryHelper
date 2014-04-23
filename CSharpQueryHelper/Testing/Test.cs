@@ -726,7 +726,9 @@ namespace CSharpQueryHelper
         [Test]
         public void NonQueryExternalTransactionAsync()
         {
-            queryHelper.StartTransaction();
+            //var transaction = new Mock<System.Transactions.Transaction>();
+            var transaction = new System.Transactions.CommittableTransaction();
+            queryHelper.EnlistTransaction(transaction);
 
             int returnValue = 100;
             MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
@@ -747,24 +749,28 @@ namespace CSharpQueryHelper
             {
                 Assert.AreEqual(101 + counter, queries[counter].RowCount);
             }
-            MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
+            //MockDatabaseFactory.DbCommand.VerifySet(dbc => dbc.Transaction = MockDatabaseFactory.DbTransaction.Object);
             MockDatabaseFactory.DbCommand.Verify(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()), Times.Exactly(10));
             MockDatabaseFactory.DbConnection.VerifySet(dbc => dbc.ConnectionString = connectionString, Times.Exactly(1));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(0));
             MockDatabaseFactory.Parameters.Verify(p => p.Add(It.IsAny<DbParameter>()), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsTrue(queryHelper.TransactionOpen);
 
-            queryHelper.CommitTransaction();
-            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
+            transaction.Raise(t => t.TransactionCompleted += null, new System.Transactions.TransactionEventArgs());
+
+            MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
+            MockDatabaseFactory.DbConnection.Verify(dbc => dbc.Close(), Times.Exactly(1));
             Assert.IsFalse(queryHelper.TransactionOpen);
         }
 
         [Test]
         public void NonQueryExternalTransactionRollbackAsync()
         {
-            queryHelper.StartTransaction();
+            var transaction = new Mock<System.Transactions.Transaction>();
+            queryHelper.EnlistTransaction(transaction.Object);
 
             int returnValue = 100;
             MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
@@ -793,7 +799,8 @@ namespace CSharpQueryHelper
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsTrue(queryHelper.TransactionOpen);
 
-            queryHelper.RollbackTransaction();
+            transaction.Raise(t => t.TransactionCompleted += null, new System.Transactions.TransactionEventArgs());
+
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(0));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(1));
             Assert.IsFalse(queryHelper.TransactionOpen);
@@ -802,7 +809,8 @@ namespace CSharpQueryHelper
         [Test]
         public void NonQueryExternalTransactionMultipleRunsAsync()
         {
-            queryHelper.StartTransaction();
+            var transaction = new Mock<System.Transactions.Transaction>();
+            queryHelper.EnlistTransaction(transaction.Object);
 
             int returnValue = 100;
             MockDatabaseFactory.DbCommand.Setup(dbc => dbc.ExecuteNonQueryAsync(It.IsAny<System.Threading.CancellationToken>()))
@@ -854,7 +862,7 @@ namespace CSharpQueryHelper
             Assert.IsTrue(queryHelper.TransactionOpen);
 
 
-            queryHelper.CommitTransaction();
+            //queryHelper.CommitTransaction();
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Commit(), Times.Exactly(1));
             MockDatabaseFactory.DbTransaction.Verify(dbt => dbt.Rollback(), Times.Exactly(0));
             Assert.IsFalse(queryHelper.TransactionOpen);
